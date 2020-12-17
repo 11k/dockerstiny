@@ -1,0 +1,17 @@
+FROM golang:latest AS builder
+
+WORKDIR /build
+
+COPY ./chat/go.mod .
+COPY ./chat/go.sum .
+RUN go mod download
+RUN go mod verify
+
+COPY ./chat/*.go ./
+RUN go build -o chat .
+
+FROM debian:buster-slim
+WORKDIR /app
+COPY --from=builder /build/chat .
+
+ENTRYPOINT ["./chat"]

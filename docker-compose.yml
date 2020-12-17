@@ -1,0 +1,65 @@
+version: "3.8"
+services:
+    nginx:
+        image: nginx:1.18.0-alpine
+        depends_on:
+            - website
+            - chat
+        ports:
+            - "8080:8080" # www
+            - "8081:8081" # cdn
+        volumes:
+            - ./website/static:/www/www.destiny.gg/static
+            - ./website/public:/www/www.destiny.gg/public
+            - ./docker/nginx-config:/etc/nginx/conf.d
+            - ./docker/nginx-certs:/etc/nginx/certs
+    website:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile-website
+        depends_on:
+            - redis
+            - mysql
+        volumes:
+            - ./website:/www/www.destiny.gg
+            - /www/www.destiny.gg/vendor/ # Exclude to avoid overwriting in container.
+    cron:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile-website
+        command: ["php", "-f", "./cron/index.php"]
+        depends_on:
+            - redis
+            - mysql
+        volumes:
+            - ./website:/www/www.destiny.gg
+            - /www/www.destiny.gg/vendor/
+    chat:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile-chat
+        volumes:
+          - ./chat/settings.cfg:/app/settings.cfg
+          - ./chat/state.dc:/app/state.dc
+        depends_on:
+            - redis
+            - mysql
+    redis:
+        image: redis:5.0.8-alpine
+        volumes:
+            - redis_data:/data
+    mysql:
+        image: mariadb:10.3.23
+        volumes:
+            - mysql_data:/var/lib/mysql
+            - ./docker/mysql-config:/etc/mysql/mysql.conf.d
+            - ./docker/mysql-scripts:/docker-entrypoint-initdb.d
+        environment:
+            MYSQL_ROOT_PASSWORD: AslanIsEvil
+            MYSQL_DATABASE: destinygg
+            MYSQL_USER: destiny
+            MYSQL_PASSWORD: AslanIsEvil
+
+volumes:
+    mysql_data:
+    redis_data:
