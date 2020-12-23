@@ -14,7 +14,7 @@ Only tested on macOS. Windows and Linux users beware.
 1. Download/install the requirements above.
 2. Clone this repo.
 ```
-git clone dockerstiny
+git clone https://github.com/11k/dockerstiny.git
 ```
 
 3. Navigate into the project folder.
