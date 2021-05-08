@@ -50,6 +50,8 @@ services:
             - redis_data:/data
     mysql:
         image: mariadb:10.3.23
+        ports:
+            - "3333:3306"
         volumes:
             - mysql_data:/var/lib/mysql
             - ./docker/mysql-config:/etc/mysql/mysql.conf.d
