@@ -1,8 +1,6 @@
 # dockerstiny
 
-A collection of Dockerfiles and config files that enable you to easily run Destiny.gg (website and chat) locally on your computer for development purposes.
-
-Only tested on macOS. Windows and Linux users beware.
+A collection of Dockerfiles and config files that enable you to easily run Destiny.gg (website and chat) locally on your computer for development purposes. Tested on macOS, Linux, and Windows (via Linux on WSL2).
 
 ## Requirements
 * [Docker](https://www.docker.com/)
@@ -11,7 +9,7 @@ Only tested on macOS. Windows and Linux users beware.
 * [mkcert](https://github.com/FiloSottile/mkcert)
 
 ## Instructions
-1. Download/install the requirements above.
+1. Download/install the requirements above. If using Linux on WSL2, mkcert must be installed on Windows. See the additional Windows mkcert instructions below.
 2. Clone this repo.
 ```
 git clone https://github.com/11k/dockerstiny.git
@@ -22,20 +20,19 @@ git clone https://github.com/11k/dockerstiny.git
 cd dockerstiny
 ```
 
-4. Clone [`destinygg/website`](https://github.com/destinygg/website.git) and [`destinygg/chat`](https://github.com/destinygg/chat.git) into this folder.
-```
-git clone https://github.com/destinygg/website.git ./website
-git clone https://github.com/destinygg/chat.git ./chat
-```
-
-5. Use `mkcert` to create and install a locally-trusted certificate authority.
+4. Use `mkcert` to create and install a locally-trusted certificate authority.
 ```
 mkcert -install
 ```
-
-6. Generate a certificate and private key.
+5. Generate a certificate and private key.
 ```
 mkcert -cert-file docker/nginx-certs/dgg.pem -key-file docker/nginx-certs/dgg-key.pem localhost 127.0.0.1
+```
+
+6. Clone [`destinygg/website`](https://github.com/destinygg/website.git) and [`destinygg/chat`](https://github.com/destinygg/chat.git) into this folder.
+```
+git clone https://github.com/destinygg/website.git ./website
+git clone https://github.com/destinygg/chat.git ./chat
 ```
 
 7. Copy the included website and chat config files to the appropriate locations.
@@ -70,3 +67,25 @@ docker-compose up
 12. Access the site via `https://localhost:8080`.
 13. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
 
+## Windows mkcert Instructions
+1. Download the latest release of mkcert from the project's [releases page on GitHub](https://github.com/FiloSottile/mkcert/releases). The version you need ends with "-windows-amd64.exe".
+2. Open Command Prompt.
+3. Navigate into the directory that contains the mkcert executable you just downloaded, likely `Downloads`.
+```
+cd %HOMEPATH%\Downloads
+```
+
+4. Create and install a locally-trusted certificate authority. Your executable may have a slightly different name.
+```
+mkcert-v1.4.3-windows-amd64.exe -install
+```
+
+6. Generate a certificate and private key.
+```
+mkcert-v1.4.3-windows-amd64.exe -cert-file dgg.pem -key-file dgg-key.pem localhost 127.0.0.1
+```
+
+7. Copy the generated files to the appropriate location. This can be done from within WSL2 by utilizing `wslvar` and `wslpath`.
+```
+cp $(wslpath "$(wslvar HOMEDRIVE)$(wslvar HOMEPATH)")/Downloads/dgg* docker/nginx-certs
+```
