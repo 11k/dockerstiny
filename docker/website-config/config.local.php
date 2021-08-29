@@ -19,11 +19,10 @@ return [
     'allowImpersonation' => true,  // MUST BE OFF ON LIVE AT ALL TIMES. usage: /impersonate?user=Cene or /impersonate?userId=12
 
     'embed' => [
-        'stream' => [
-            'platform' => '',
-            'name' => '',
-            'twitchParents' => [] // Domains that will embed the stream, e.g., 'www.example.com'. See https://discuss.dev.twitch.tv/t/twitch-embedded-player-updates-in-2020/23956 for more details.
-        ],
+        'displayName' => 'destiny',
+        'twitchParents' => ['localhost'],
+        'embedTwitchStream' => true,
+        'embedYouTubeStream' => false,
         'chat' => '/embed/chat'
     ],
 
@@ -75,6 +74,11 @@ return [
             'redirect_uri' => 'https://localhost/auth/google'
         ],
         'youtube' => [
+            'client_id' => '',
+            'client_secret' => '',
+            'redirect_uri' => 'https://localhost/admin/youtube/auth'
+        ],
+        'youtubebroadcaster' => [
             'client_id' => '',
             'client_secret' => '',
             'redirect_uri' => 'https://localhost/admin/youtube/auth'
@@ -155,10 +159,9 @@ return [
         ]
     ],
 
-    'youtube' => [
-        'apikey' => '',
-        'playlistId' => '',
-        'user' => '',
+    'youtubebroadcaster' => [
+        'sync_memberships' => false,
+        'channelId' => '',
         'dgg_user' => -1
     ],
 
@@ -183,7 +186,7 @@ return [
 
     'twitch' => [
         'id' => -1,
-        'user' => '',
+        'user' => 'destiny',
         'webhooks_callback' => '',
     ],
 
