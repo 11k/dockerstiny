@@ -29,10 +29,11 @@ mkcert -install
 mkcert -cert-file docker/nginx-certs/dgg.pem -key-file docker/nginx-certs/dgg-key.pem localhost 127.0.0.1
 ```
 
-6. Clone [`destinygg/website`](https://github.com/destinygg/website.git) and [`destinygg/chat`](https://github.com/destinygg/chat.git) into this folder.
+6. Clone [`destinygg/website`](https://github.com/destinygg/website.git), [`destinygg/chat`](https://github.com/destinygg/chat.git), and [`destinygg/chat-gui`](https://github.com/destinygg/chat-gui.git) into this folder.
 ```
-git clone https://github.com/destinygg/website.git ./website
-git clone https://github.com/destinygg/chat.git ./chat
+git clone https://github.com/destinygg/website.git
+git clone https://github.com/destinygg/chat.git
+git clone https://github.com/destinygg/chat-gui.git
 ```
 
 7. Copy the included website and chat config files to the appropriate locations.
@@ -47,25 +48,36 @@ cp website/config/destiny.gg.sql docker/mysql-scripts/01.destiny.gg.sql
 cp website/config/destiny.gg.data.sql docker/mysql-scripts/02.destiny.gg.data.sql
 ```
 
-9. Install all Node.js dependencies for the website.
+9. Install all Node.js dependencies for the chat frontend.
 ```
-cd website
+cd chat-gui
 npm ci
 ```
 
-10. Generate the site's static assets.
+9. Install the website's dependencies.
+```
+cd ../website
+npm ci
+```
+
+10. Link the local copy of `chat-gui` rather than using the version installed from the npm registry.
+```
+npm link ../chat-gui
+```
+
+11. Generate the site's static assets.
 ```
 npm run build
 ```
 
-11. Head back into the project folder and build/run. This command will take some time.
+12. Head back into the project folder and build/run. This command will take some time.
 ```
 cd ..
 docker-compose up
 ```
 
-12. Access the site via `https://localhost:8080`.
-13. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
+13. Access the site via `https://localhost:8080`.
+14. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
 
 ## Windows mkcert Instructions
 1. Download the latest release of mkcert from the project's [releases page on GitHub](https://github.com/FiloSottile/mkcert/releases). The version you need ends with "-windows-amd64.exe".
