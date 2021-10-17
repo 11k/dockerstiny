@@ -14,4 +14,10 @@ FROM debian:buster-slim
 WORKDIR /app
 COPY --from=builder /build/chat .
 
+# Install certificate authority created by mkcert to allow HTTPS connections to
+# website.
+RUN apt-get update && apt-get install -y ca-certificates
+COPY ./docker/ca-certs/rootCA.pem /usr/local/share/ca-certificates/dgg.crt
+RUN update-ca-certificates
+
 ENTRYPOINT ["./chat"]

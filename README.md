@@ -24,60 +24,66 @@ cd dockerstiny
 ```
 mkcert -install
 ```
+
 5. Generate a certificate and private key.
 ```
 mkcert -cert-file docker/nginx-certs/dgg.pem -key-file docker/nginx-certs/dgg-key.pem localhost 127.0.0.1
 ```
 
-6. Clone [`destinygg/website`](https://github.com/destinygg/website.git), [`destinygg/chat`](https://github.com/destinygg/chat.git), and [`destinygg/chat-gui`](https://github.com/destinygg/chat-gui.git) into this folder.
+6. Copy the CA certificate created by mkcert into `ca-certs`.
+```
+cp "$(mkcert -CAROOT)/rootCA.pem" docker/ca-certs/
+```
+
+7. Clone [`destinygg/website`](https://github.com/destinygg/website.git), [`destinygg/chat`](https://github.com/destinygg/chat.git), and [`destinygg/chat-gui`](https://github.com/destinygg/chat-gui.git) into this folder.
 ```
 git clone https://github.com/destinygg/website.git
 git clone https://github.com/destinygg/chat.git
 git clone https://github.com/destinygg/chat-gui.git
 ```
 
-7. Copy the included website and chat config files to the appropriate locations.
+8. Copy the included website and chat config files to the appropriate locations.
 ```
 cp docker/website-config/config.local.php website/config/
 cp docker/chat-config/settings.cfg chat/
 ```
 
-8. Copy the database initialization scripts into the `mysql-scripts` directory. Note the numeric prefixes. This ensures the scripts are executed in the correct order.
+9. Copy the database initialization scripts into the `mysql-scripts` directory. Note the numeric prefixes. This ensures the scripts are executed in the correct order.
 ```
 cp website/config/destiny.gg.sql docker/mysql-scripts/01.destiny.gg.sql
 cp website/config/destiny.gg.data.sql docker/mysql-scripts/02.destiny.gg.data.sql
 ```
 
-9. Install all Node.js dependencies for the chat frontend.
+10. Install all Node.js dependencies for the chat frontend.
 ```
 cd chat-gui
 npm ci
 ```
 
-9. Install the website's dependencies.
+11. Install the website's dependencies.
 ```
 cd ../website
 npm ci
 ```
 
-10. Link the local copy of `chat-gui` rather than using the version installed from the npm registry.
+12. Link the local copy of `chat-gui` rather than using the version installed from the npm registry.
 ```
 npm link ../chat-gui
 ```
 
-11. Generate the site's static assets.
+13. Generate the site's static assets.
 ```
 npm run build
 ```
 
-12. Head back into the project folder and build/run. This command will take some time.
+14. Head back into the project folder and build/run. This command will take some time.
 ```
 cd ..
 docker-compose up
 ```
 
-13. Access the site via `https://localhost:8080`.
-14. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
+15. Access the site via `https://localhost:8080`.
+16. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
 
 ## Windows mkcert Instructions
 1. Download the latest release of mkcert from the project's [releases page on GitHub](https://github.com/FiloSottile/mkcert/releases). The version you need ends with "-windows-amd64.exe".
@@ -100,4 +106,9 @@ mkcert-v1.4.3-windows-amd64.exe -cert-file dgg.pem -key-file dgg-key.pem localho
 7. Copy the generated files to the appropriate location. This can be done from within WSL2 by utilizing `wslvar` and `wslpath`.
 ```
 cp $(wslpath "$(wslvar HOMEDRIVE)$(wslvar HOMEPATH)")/Downloads/dgg* docker/nginx-certs
+```
+
+8. Do the same with the CA certificate.
+```
+cp $(wslpath "$(mkcert-v1.4.3-windows-amd64.exe -CAROOT)\rootCA.pem") docker/ca-certs/
 ```
