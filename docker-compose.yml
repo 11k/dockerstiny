@@ -44,6 +44,8 @@ services:
         depends_on:
             - redis
             - mysql
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
     redis:
         image: redis:5.0.8-alpine
         volumes:
