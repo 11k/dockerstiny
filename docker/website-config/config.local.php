@@ -71,52 +71,52 @@ return [
         'google' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/auth/google'
+            'redirect_uri' => 'https://localhost:8080/auth/google'
         ],
         'youtube' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/admin/youtube/auth'
+            'redirect_uri' => 'https://localhost:8080/admin/youtube/auth'
         ],
         'youtubebroadcaster' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/admin/youtube/auth'
+            'redirect_uri' => 'https://localhost:8080/admin/youtube/auth'
         ],
         'twitch' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/auth/twitch'
+            'redirect_uri' => 'https://localhost:8080/auth/twitch'
         ],
         'twitter' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/auth/twitter'
+            'redirect_uri' => 'https://localhost:8080/auth/twitter'
         ],
         'reddit' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/auth/reddit'
+            'redirect_uri' => 'https://localhost:8080/auth/reddit'
         ],
         'discord' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/auth/discord'
+            'redirect_uri' => 'https://localhost:8080/auth/discord'
         ],
         'streamlabs' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/auth/streamlabs'
+            'redirect_uri' => 'https://localhost:8080/auth/streamlabs'
         ],
         'twitchbroadcaster' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/admin/twitch/auth'
+            'redirect_uri' => 'https://localhost:8080/admin/twitch/auth'
         ],
         'streamelements' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost/admin/streamelements/auth'
+            'redirect_uri' => 'https://localhost:8080/admin/streamelements/auth'
         ]
     ],
 
