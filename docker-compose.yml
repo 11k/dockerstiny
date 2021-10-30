@@ -100,6 +100,8 @@ services:
             MYSQL_DATABASE: destinygg
             MYSQL_USER: destiny
             MYSQL_PASSWORD: AslanIsEvil
+        logging:
+            driver: none
         profiles:
             - test
 
