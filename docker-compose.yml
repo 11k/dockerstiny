@@ -13,6 +13,8 @@ services:
             - ./website/public:/www/www.destiny.gg/public
             - ./docker/nginx-config:/etc/nginx/conf.d
             - ./docker/nginx-certs:/etc/nginx/certs
+        profiles:
+            - dev
     website:
         build:
             context: .
@@ -23,6 +25,8 @@ services:
         volumes:
             - ./website:/www/www.destiny.gg
             - /www/www.destiny.gg/vendor/ # Exclude to avoid overwriting in container.
+        profiles:
+            - dev
     cron:
         build:
             context: .
@@ -34,6 +38,8 @@ services:
         volumes:
             - ./website:/www/www.destiny.gg
             - /www/www.destiny.gg/vendor/
+        profiles:
+            - dev
     chat:
         build:
             context: .
@@ -46,10 +52,15 @@ services:
             - mysql
         extra_hosts:
             - "host.docker.internal:host-gateway"
+        profiles:
+            - dev
+>>>>>>> 09e608f (Create website and mysql services for testing)
     redis:
         image: redis:5.0.8-alpine
         volumes:
             - redis_data:/data
+        profiles:
+            - dev
     mysql:
         image: mariadb:10.3.23
         ports:
@@ -63,7 +74,35 @@ services:
             MYSQL_DATABASE: destinygg
             MYSQL_USER: destiny
             MYSQL_PASSWORD: AslanIsEvil
+        profiles:
+            - dev
+
+    website-test:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile-website
+        depends_on:
+            - mysql-test
+        volumes:
+            - ./website:/www/www.destiny.gg
+            - /www/www.destiny.gg/vendor/
+        profiles:
+            - test
+    mysql-test:
+        image: mariadb:10.3.23
+        volumes:
+            - mysql_test_data:/var/lib/mysql
+            - ./docker/mysql-config:/etc/mysql/mysql.conf.d
+            - ./docker/mysql-scripts:/docker-entrypoint-initdb.d
+        environment:
+            MYSQL_ROOT_PASSWORD: AslanIsEvil
+            MYSQL_DATABASE: destinygg
+            MYSQL_USER: destiny
+            MYSQL_PASSWORD: AslanIsEvil
+        profiles:
+            - test
 
 volumes:
     mysql_data:
+    mysql_test_data:
     redis_data:

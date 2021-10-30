@@ -79,7 +79,7 @@ npm run build
 14. Head back into the project folder and build/run. This command will take some time.
 ```
 cd ..
-docker-compose up
+docker-compose --profile dev up
 ```
 
 15. Access the site via `https://localhost:8080`.
