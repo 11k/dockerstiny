@@ -98,12 +98,12 @@ cd %HOMEPATH%\Downloads
 mkcert-v1.4.3-windows-amd64.exe -install
 ```
 
-6. Generate a certificate and private key.
+5. Generate a certificate and private key.
 ```
 mkcert-v1.4.3-windows-amd64.exe -cert-file dgg.pem -key-file dgg-key.pem localhost 127.0.0.1 host.docker.internal
 ```
 
-7. Copy the generated files to the appropriate location. This can be done from within WSL2 by utilizing `wslvar` and `wslpath`.
+6. Copy the generated files to the appropriate location. This can be done from within WSL2 by utilizing `wslvar` and `wslpath`.
 ```
 cp $(wslpath "$(wslvar HOMEDRIVE)$(wslvar HOMEPATH)")/Downloads/dgg* docker/nginx-certs
 ```
