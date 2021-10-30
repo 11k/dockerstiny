@@ -86,6 +86,7 @@ services:
         volumes:
             - ./website:/www/www.destiny.gg
             - /www/www.destiny.gg/vendor/
+        command: ["vendor/bin/phpunit", "./tests"]
         profiles:
             - test
     mysql-test:
