@@ -54,7 +54,6 @@ services:
             - "host.docker.internal:host-gateway"
         profiles:
             - dev
->>>>>>> 09e608f (Create website and mysql services for testing)
     redis:
         image: redis:5.0.8-alpine
         volumes:
