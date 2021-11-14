@@ -83,8 +83,8 @@ services:
         depends_on:
             - mysql-test
         volumes:
-            - ./website:/www/www.destiny.gg
-            - /www/www.destiny.gg/vendor/
+            - ./website/lib:/www/www.destiny.gg/lib/
+            - ./website/tests:/www/www.destiny.gg/tests/
         command: ["vendor/bin/phpunit", "./tests"]
         profiles:
             - test
