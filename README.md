@@ -27,7 +27,7 @@ mkcert -install
 
 5. Generate a certificate and private key.
 ```
-mkcert -cert-file docker/nginx-certs/dgg.pem -key-file docker/nginx-certs/dgg-key.pem localhost 127.0.0.1
+mkcert -cert-file docker/nginx-certs/dgg.pem -key-file docker/nginx-certs/dgg-key.pem localhost 127.0.0.1 host.docker.internal
 ```
 
 6. Copy the CA certificate created by mkcert into `ca-certs`.
