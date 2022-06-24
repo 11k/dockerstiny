@@ -75,6 +75,14 @@ services:
             MYSQL_PASSWORD: AslanIsEvil
         profiles:
             - dev
+    live-ws:
+        build:
+            context: ./live-ws
+        depends_on:
+            - redis
+        env_file: ./live-ws/.env
+        profiles:
+            - dev
 
     website-test:
         build:
