@@ -15,6 +15,7 @@ RUN pecl install -o -f redis \
 
 RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 COPY ./website/composer.json .
+COPY ./website/composer.lock .
 RUN composer install
 
 CMD ["php-fpm"]
