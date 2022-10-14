@@ -35,12 +35,12 @@ mkcert -cert-file docker/nginx-certs/dgg.pem -key-file docker/nginx-certs/dgg-ke
 cp "$(mkcert -CAROOT)/rootCA.pem" docker/ca-certs/
 ```
 
-7. Clone [`destinygg/website`](https://github.com/destinygg/website.git), [`destinygg/chat`](https://github.com/destinygg/chat.git), [`destinygg/chat-gui`](https://github.com/destinygg/chat-gui.git), and [`destinygg/live-ws`](https://github.com/destinygg/live-ws.git) into this folder.
+7. Clone [`destinygg/website-private`](https://github.com/destinygg/website-private), [`destinygg/chat-private`](https://github.com/destinygg/chat-private), [`destinygg/chat-gui`](https://github.com/destinygg/chat-gui), and [`destinygg/live-ws`](https://github.com/destinygg/live-ws) into `dockerstiny`.
 ```
-git clone https://github.com/destinygg/website.git
-git clone https://github.com/destinygg/chat.git
-git clone https://github.com/destinygg/chat-gui.git
-git clone https://github.com/destinygg/live-ws.git
+git clone git@github.com:destinygg/website-private.git website
+git clone git@github.com:destinygg/chat-private.git chat
+git clone git@github.com:destinygg/chat-gui.git
+git clone git@github.com:destinygg/live-ws.git
 ```
 
 8. Copy the included website and chat config files to the appropriate locations.
