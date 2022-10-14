@@ -46,7 +46,9 @@ git clone git@github.com:destinygg/live-ws.git
 8. Copy the included website and chat config files to the appropriate locations.
 ```
 cp docker/website-config/config.local.php website/config/
+cp docker/website-config/.env website/.env
 cp docker/chat-config/settings.cfg chat/
+cp docker/live-ws-config/.env live-ws/.env
 ```
 
 9. Copy the database initialization scripts into the `mysql-scripts` directory. Note the numeric prefixes. This ensures the scripts are executed in the correct order.
