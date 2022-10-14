@@ -19,14 +19,15 @@ return [
     'allowImpersonation' => true,  // MUST BE OFF ON LIVE AT ALL TIMES. usage: /impersonate?user=Cene or /impersonate?userId=12
 
     'embed' => [
-        'displayName' => 'destiny',
+        'displayName' => 'xqc',
         'twitchParents' => ['localhost'],
         'embedTwitchStream' => true,
         'embedYouTubeStream' => false,
+        'embedFacebookStream' => false,
         'chat' => '/embed/chat'
     ],
 
-    'logLevel' => Logger::WARNING,
+    'logLevel' => Logger::DEBUG,
     'chatWebSocketUrl' => 'wss://localhost:8080/ws',
     'cdn' => ['domain' => '127.0.0.1:8081','protocol' => 'https://'],
     'blog' => ['feed' => ''],
@@ -76,7 +77,7 @@ return [
         'youtube' => [
             'client_id' => '',
             'client_secret' => '',
-            'redirect_uri' => 'https://localhost:8080/admin/youtube/auth'
+            'redirect_uri' => 'https://localhost:8080/profile/auth/youtube/cb'
         ],
         'youtubebroadcaster' => [
             'client_id' => '',
@@ -117,7 +118,16 @@ return [
             'client_id' => '',
             'client_secret' => '',
             'redirect_uri' => 'https://localhost:8080/admin/streamelements/auth'
-        ]
+        ],
+        'steam' => [
+            'openid_realm' => 'https://localhost:8080',
+            'redirect_uri' => 'https://localhost:8080/auth/steam'
+        ],
+        'facebookbroadcaster' => [
+            'client_id' => '',
+            'client_secret' => '',
+            'redirect_uri' => 'https://localhost:8080/admin/facebook/auth'
+        ],
     ],
 
     'cookie' => [
@@ -162,7 +172,7 @@ return [
     'youtubebroadcaster' => [
         'sync_memberships' => false,
         'channelId' => '',
-        'dgg_user' => -1
+        'dgg_user' => 1
     ],
 
     'analytics' => [
@@ -185,8 +195,8 @@ return [
     ],
 
     'twitch' => [
-        'id' => -1,
-        'user' => 'destiny',
+        'id' => 71092938,
+        'user' => 'xqc',
         'webhooks_callback' => '',
     ],
 
@@ -198,21 +208,27 @@ return [
         'alert_donations' => true,
         'alert_subscriptions' => true,
         'send_donations' => true,
-        'dgg_user' => -1,
+        'dgg_user' => 1,
     ],
 
     'streamlabs' => [
         'alert_donations' => true,
         'alert_subscriptions' => true,
         'send_donations' => true,
-        'dgg_user' => -1,
+        'dgg_user' => 1,
     ],
 
     'twitchbroadcaster' => [
         'alert_donations' => true,
         'alert_subscriptions' => true,
         'send_donations' => true,
-        'dgg_user' => -1,
+        'dgg_user' => 1,
+    ],
+
+    'facebookbroadcaster' => [
+        'dgg_user' => 1,
+        'webhookVerifyToken' => '',
+        'webhookCallbackUrl' => 'https://localhost:8080/facebook/webhook',
     ],
 
     'subscriptionType' => 'destiny.gg',
