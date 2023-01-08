@@ -11,6 +11,7 @@ services:
         volumes:
             - ./website/static:/www/www.destiny.gg/static
             - ./website/public:/www/www.destiny.gg/public
+            - ./website/custom:/www/www.destiny.gg/custom
             - ./docker/nginx-config:/etc/nginx/conf.d
             - ./docker/nginx-certs:/etc/nginx/certs
         profiles:
