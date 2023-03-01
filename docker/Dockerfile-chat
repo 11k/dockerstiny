@@ -7,7 +7,7 @@ COPY ./chat/go.sum .
 RUN go mod download
 RUN go mod verify
 
-COPY ./chat/*.go ./
+COPY ./chat/. .
 RUN go build -o chat .
 
 FROM debian:buster-slim
