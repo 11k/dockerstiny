@@ -1,7 +1,7 @@
 version: "3.8"
 services:
     nginx:
-        image: nginx:1.18.0-alpine
+        image: nginx:1.20-alpine
         depends_on:
             - website
             - chat
@@ -12,7 +12,9 @@ services:
             - ./website/static:/www/www.destiny.gg/static
             - ./website/public:/www/www.destiny.gg/public
             - ./website/custom:/www/www.destiny.gg/custom
-            - ./docker/nginx-config:/etc/nginx/conf.d
+            - ./docker/nginx-config/dgg.local.conf:/etc/nginx/conf.d/dgg.local.conf
+            - ./docker/nginx-config/domain.conf:/etc/nginx/domain.conf
+            - ./docker/nginx-config/dgg_csp.conf:/etc/nginx/dgg_csp.conf
             - ./docker/nginx-certs:/etc/nginx/certs
         profiles:
             - dev
