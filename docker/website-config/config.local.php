@@ -29,6 +29,7 @@ return [
         'chat' => '/embed/chat'
     ],
 
+    'broadcasterId' => 1, // User ID of the streamer.
     'origin' => 'https://localhost:8080',
     'production' => false,
     'logLevel' => Logger::DEBUG,
@@ -177,7 +178,6 @@ return [
     'youtubebroadcaster' => [
         'sync_memberships' => false,
         'channelId' => '',
-        'dgg_user' => 1
     ],
 
     'analytics' => [
@@ -224,32 +224,27 @@ return [
         'alert_donations' => true,
         'alert_subscriptions' => true,
         'send_donations' => true,
-        'dgg_user' => 1,
     ],
 
     'streamlabs' => [
         'alert_donations' => true,
         'alert_subscriptions' => true,
         'send_donations' => true,
-        'dgg_user' => 1,
     ],
 
     'twitchbroadcaster' => [
         'alert_donations' => true,
         'alert_subscriptions' => true,
         'send_donations' => true,
-        'dgg_user' => 1,
     ],
 
     'facebookbroadcaster' => [
-        'dgg_user' => 1,
         'webhookVerifyToken' => '',
         'webhookCallbackUrl' => 'https://localhost/facebook/webhook',
     ],
 
     'vimeo' => [
         'folder' => '',
-        'dgg_user' => 1,
     ],
 
     'subscriptionType' => 'destiny.gg',
@@ -398,9 +393,5 @@ return [
     'footer' => [
         'copyrightName' => null,
         'contactEmail' => null,
-    ],
-
-    'patreonbroadcaster' => [
-        'dgg_user' => 1,
     ],
 ];
