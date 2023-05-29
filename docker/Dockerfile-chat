@@ -1,23 +1,25 @@
-FROM golang:1.15 AS builder
+# base alpine image with our cert
+FROM alpine:3.18 AS base
+# Install certificate authority created by mkcert to allow HTTPS connections to
+# website.
+COPY ./docker/ca-certs/rootCA.pem /usr/local/share/ca-certificates/dgg.crt
+RUN apk add --no-cache tzdata ca-certificates
 
+# caching go modules
+FROM golang:alpine AS go-base
 WORKDIR /build
-
 COPY ./chat/go.mod .
 COPY ./chat/go.sum .
 RUN go mod download
 RUN go mod verify
 
-COPY ./chat/. .
-RUN go build -o chat .
+# builder image
+FROM go-base AS go-builder
+WORKDIR /build
+COPY ./chat .
+RUN go build -v -o chat .
 
-FROM debian:buster-slim
+FROM base
 WORKDIR /app
-COPY --from=builder /build/chat .
-
-# Install certificate authority created by mkcert to allow HTTPS connections to
-# website.
-RUN apt-get update && apt-get install -y ca-certificates
-COPY ./docker/ca-certs/rootCA.pem /usr/local/share/ca-certificates/dgg.crt
-RUN update-ca-certificates
-
+COPY --from=go-builder /build/chat .
 ENTRYPOINT ["./chat"]
