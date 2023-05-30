@@ -94,6 +94,7 @@ services:
         depends_on:
             - mysql-test
         volumes:
+            - ./website/config:/www/www.destiny.gg/config/
             - ./website/lib:/www/www.destiny.gg/lib/
             - ./website/tests:/www/www.destiny.gg/tests/
             - ./website/tmp:/www/www.destiny.gg/tmp/
