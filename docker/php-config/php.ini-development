@@ -1384,7 +1384,7 @@ session.cookie_samesite =
 
 ; Handler used to serialize data. php is the standard serializer of PHP.
 ; http://php.net/session.serialize-handler
-session.serialize_handler = php
+session.serialize_handler = php_serialize
 
 ; Defines the probability that the 'garbage collection' process is started on every
 ; session initialization. The probability is calculated by using gc_probability/gc_divisor,
