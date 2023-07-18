@@ -80,7 +80,8 @@ services:
             - dev
     live-ws:
         build:
-            context: ./live-ws
+            context: .
+            dockerfile: ./docker/Dockerfile-live-ws
         depends_on:
             - redis
         env_file: ./live-ws/.env
