@@ -156,23 +156,12 @@ return [
     'curl' => ['timeout' => 15, 'connect_timeout' => 7, 'http_errors' => false],
 
     'paypal' => [
+        'environment' => \Destiny\PayPal\PayPalEnvironment::SANDBOX,
+        'username' => '',
+        'password' => '',
+        'signature' => '',
         'endpoint_checkout' => 'https://www.sandbox.paypal.com/webscr?cmd=_express-checkout&token=',
         'endpoint_ipn' => 'http://localhost/ipn/',
-        'sdk' => [
-            'mode'                      => 'sandbox',
-            'acct1.ClientId'            => '',
-            'acct1.ClientSecret'        => '',
-            'acct1.UserName'            => '',
-            'acct1.Password'            => '',
-            'acct1.Signature'           => '',
-            'acct1.CertPath'            => '',
-            'service.Endpoint.IPN'      => 'http://localhost/ipn/',
-            'log.LogEnabled'            => true,
-            'log.FileName'              => _BASEDIR . 'log/paypal.log',
-            'log.LogLevel'              => 'ERROR',
-            'http.ConnectionTimeOut'    => 10,
-            'http.Retry'                => 1,
-        ]
     ],
 
     'youtubebroadcaster' => [
