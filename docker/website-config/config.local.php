@@ -8,7 +8,7 @@
 use Destiny\Common\Authentication\AuthProvider;
 use Destiny\StreamInfo\StreamPlatform;
 use Destiny\Homepage\UploadsClickEvent;
-use Monolog\Logger;
+use Monolog\Level;
 
 return [
     'cacheNamespace' => '_web18',
@@ -32,7 +32,7 @@ return [
     'broadcasterId' => 1, // User ID of the streamer.
     'origin' => 'https://localhost:8080',
     'production' => false,
-    'logLevel' => Logger::DEBUG,
+    'logLevel' => Level::Debug,
     'chatWebSocketUrl' => 'wss://localhost:8080/ws',
     'apiWebSocketUrl' => 'wss://localhost:8080/ws-api',
     'cdn' => ['domain' => '127.0.0.1:8081','protocol' => 'https://'],
