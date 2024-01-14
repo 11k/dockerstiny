@@ -102,7 +102,7 @@ services:
         profiles:
             - test
     mysql-test:
-        image: mariadb:10.3.23
+        image: mariadb:10.11.6
         volumes:
             - mysql_test_data:/var/lib/mysql
             - ./docker/mysql-config:/etc/mysql/mysql.conf.d
