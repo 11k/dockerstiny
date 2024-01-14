@@ -64,7 +64,7 @@ services:
         profiles:
             - dev
     mysql:
-        image: mariadb:10.3.23
+        image: mariadb:10.11.6
         ports:
             - "3333:3306"
         volumes:
