@@ -51,38 +51,37 @@ cp docker/chat-config/settings.cfg chat/
 cp docker/live-ws-config/.env live-ws/.env
 ```
 
-9. Copy the database initialization scripts into the `mysql-scripts` directory. Note the numeric prefixes. This ensures the scripts are executed in the correct order.
-```
-cp website/config/destiny.gg.sql docker/mysql-scripts/01.destiny.gg.sql
-cp website/config/destiny.gg.data.sql docker/mysql-scripts/02.destiny.gg.data.sql
-```
-
-10. Install all Node.js dependencies for the chat frontend.
+9. Install all Node.js dependencies for the chat frontend.
 ```
 cd chat-gui
 npm ci
 ```
 
-11. Install the website's dependencies.
+10. Install the website's dependencies.
 ```
 cd ../website
 npm ci
 ```
 
-12. Link the local copy of `chat-gui` rather than using the version installed from the npm registry.
+11. Link the local copy of `chat-gui` rather than using the version installed from the npm registry.
 ```
 npm link ../chat-gui
 ```
 
-13. Generate the site's static assets.
+12. Generate the site's static assets.
 ```
 npm run build
 ```
 
-14. Head back into the project folder and build/run. This command will take some time.
+13. Head back into the project folder and build/run. This command will take some time.
 ```
 cd ..
 docker-compose --profile dev up
+```
+
+14. Run migrations to initialize the database.
+```
+docker compose --profile dev exec website vendor/bin/doctrine-migrations migrations:migrate -q
 ```
 
 15. Access the site via `https://localhost:8080`.
