@@ -150,7 +150,7 @@ return [
         'dbname'        => 'destinygg',
         'password'      => 'AslanIsEvil',
         'charset'       => 'UTF8',
-        'driverOptions' => [PDO::MYSQL_ATTR_INIT_COMMAND => 'SET NAMES UTF8,time_zone = \'+0:00\'']
+        'driverOptions' => [PDO::MYSQL_ATTR_INIT_COMMAND => 'SET NAMES utf8mb4,time_zone = \'+0:00\'']
     ],
 
     'curl' => ['timeout' => 15, 'connect_timeout' => 7, 'http_errors' => false],
