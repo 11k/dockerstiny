@@ -1,4 +1,4 @@
-FROM php:8.1.20-fpm
+FROM php:8.3.17-fpm
 
 WORKDIR /www/www.destiny.gg
 COPY docker/php-config/php.ini-development $PHP_INI_DIR/php.ini
