@@ -99,6 +99,7 @@ services:
             - ./website/tests:/www/www.destiny.gg/tests/
             - ./website/tmp:/www/www.destiny.gg/tmp/
             - ./website/phpunit.xml:/www/www.destiny.gg/phpunit.xml
+            - ./website/migrations.php:/www/www.destiny.gg/migrations.php
         command: ["vendor/bin/phpunit"]
         profiles:
             - test
