@@ -7,6 +7,7 @@ services:
         ports:
             - "8080:8080" # www
             - "8081:8081" # cdn
+            - "8083:8083" # www non-ssl
         volumes:
             - ./website/static:/www/www.destiny.gg/static
             - ./website/public:/www/www.destiny.gg/public
