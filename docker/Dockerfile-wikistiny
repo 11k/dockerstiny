@@ -1,0 +1,3 @@
+FROM mediawiki:1.43
+COPY ./docker/ca-certs/rootCA.pem /usr/local/share/ca-certificates/dgg.crt
+RUN update-ca-certificates

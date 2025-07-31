@@ -2,3 +2,6 @@ chat/
 chat-gui/
 website/
 live-ws/
+Wikistiny/
+
+docker-compose.override.yml

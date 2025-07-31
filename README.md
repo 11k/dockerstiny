@@ -35,12 +35,13 @@ mkcert -cert-file docker/nginx-certs/dgg.pem -key-file docker/nginx-certs/dgg-ke
 cp "$(mkcert -CAROOT)/rootCA.pem" docker/ca-certs/
 ```
 
-7. Clone [`destinygg/website-private`](https://github.com/destinygg/website-private), [`destinygg/chat-private`](https://github.com/destinygg/chat-private), [`destinygg/chat-gui`](https://github.com/destinygg/chat-gui), and [`destinygg/live-ws`](https://github.com/destinygg/live-ws) into `dockerstiny`.
+7. Clone [`destinygg/website-private`](https://github.com/destinygg/website-private), [`destinygg/chat-private`](https://github.com/destinygg/chat-private), [`destinygg/chat-gui`](https://github.com/destinygg/chat-gui), [`destinygg/live-ws`](https://github.com/destinygg/live-ws), and [`destinygg/Wikistiny`](https://github.com/destinygg/Wikistiny) into `dockerstiny`.
 ```
 git clone git@github.com:destinygg/website-private.git website
 git clone git@github.com:destinygg/chat-private.git chat
 git clone git@github.com:destinygg/chat-gui.git
 git clone git@github.com:destinygg/live-ws.git
+git clone git@github.com:destinygg/Wikistiny.git
 ```
 
 8. Copy the included website and chat config files to the appropriate locations.
@@ -86,6 +87,12 @@ docker compose --profile dev exec website vendor/bin/doctrine-migrations migrati
 
 15. Access the site via `https://localhost:8080`.
 16. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
+
+## Wikistiny instructions
+1. Run the install script to initialize the wiki.
+```
+docker compose --profile dev exec -it wikistiny su www-data -s /bin/bash -c 'MW_CONFIG_FILE=/tmp/LocalSettings.php php maintenance/run install --dbtype=sqlite --dbname="$WIKI_DB_NAME" --dbpath=/var/www/data --pass="$WIKI_PASS" --server="http://localhost:$WIKI_SERVER_PORT" --confpath=/tmp --scriptpath="" "$WIKI_NAME" "$WIKI_ADMIN"'
+```
 
 ## Windows mkcert Instructions
 1. Download the latest release of mkcert from the project's [releases page on GitHub](https://github.com/FiloSottile/mkcert/releases). The version you need ends with "-windows-amd64.exe".
