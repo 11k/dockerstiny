@@ -4,7 +4,6 @@ services:
         depends_on:
             - website
             - chat
-            - wikistiny
         ports:
             - "8080:8080" # www
             - "8081:8081" # cdn
@@ -91,6 +90,8 @@ services:
         build:
             context: .
             dockerfile: ./docker/Dockerfile-wikistiny
+        depends_on:
+            - nginx
         ports:
             - "8084:80" # wiki
         volumes:
