@@ -86,6 +86,28 @@ services:
         env_file: ./live-ws/.env
         profiles:
             - dev
+    wikistiny:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile-wikistiny
+        depends_on:
+            - nginx
+        ports:
+            - "8084:80" # wiki
+        volumes:
+            - wiki_data:/var/www/data
+            - ./docker/wiki-config/LocalSettings.php:/var/www/html/LocalSettings.php:ro
+            - ./Wikistiny/extensions/Wikistiny/:/var/www/html/extensions/Wikistiny
+        environment:
+            WIKI_DB_NAME: "dgg_wiki"
+            WIKI_PASS: "jaydrschoice"
+            WIKI_NAME: "dggwiki"
+            WIKI_ADMIN: "Admin"
+            WIKI_SERVER_PORT: "8084"
+        extra_hosts:
+            - "host.docker.internal:host-gateway"
+        profiles:
+            - dev
 
     website-test:
         build:
@@ -122,3 +144,4 @@ volumes:
     mysql_data:
     mysql_test_data:
     redis_data:
+    wiki_data:

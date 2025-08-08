@@ -40,7 +40,9 @@ return [
     'reddit' => ['threads' => ''],
     'android' => ['app' => ''],
     'meta' => [],
-    'links' => [],
+    'links' => [
+        '/wiki' => 'http://localhost:8084',
+    ],
     'banAppealUrl' => '',
     'support_email' => '',
     'google-verification' => '',
