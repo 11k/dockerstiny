@@ -5,8 +5,8 @@ services:
             - website
             - chat
         ports:
-            - "8080:8080" # www
-            - "8081:8081" # cdn
+            - "${PORT_WWW:-8080}:${PORT_WWW:-8080}" # www
+            - "${PORT_CDN:-8081}:${PORT_CDN:-8081}" # cdn
             - "8083:8083" # www non-ssl
         volumes:
             - ./website/static:/www/www.destiny.gg/static
@@ -66,7 +66,7 @@ services:
     mysql:
         image: mariadb:10.11.6
         ports:
-            - "3333:3306"
+            - "${PORT_MYSQL:-3333}:3306"
         volumes:
             - mysql_data:/var/lib/mysql
             - ./docker/mysql-config:/etc/mysql/mysql.conf.d
@@ -93,7 +93,7 @@ services:
         depends_on:
             - nginx
         ports:
-            - "8084:80" # wiki
+            - "${PORT_WIKI:-8084}:80" # wiki
         volumes:
             - wiki_data:/var/www/data
             - ./docker/wiki-config/LocalSettings.php:/var/www/html/LocalSettings.php:ro
@@ -103,7 +103,7 @@ services:
             WIKI_PASS: "jaydrschoice"
             WIKI_NAME: "dggwiki"
             WIKI_ADMIN: "Admin"
-            WIKI_SERVER_PORT: "8084"
+            WIKI_SERVER_PORT: "${PORT_WIKI:-8084}"
         extra_hosts:
             - "host.docker.internal:host-gateway"
         profiles:
