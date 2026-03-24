@@ -7,7 +7,6 @@ services:
         ports:
             - "${PORT_WWW:-8080}:${PORT_WWW:-8080}" # www
             - "${PORT_CDN:-8081}:${PORT_CDN:-8081}" # cdn
-            - "8083:8083" # www non-ssl
         volumes:
             - ./website/static:/www/www.destiny.gg/static
             - ./website/public:/www/www.destiny.gg/public
@@ -65,8 +64,6 @@ services:
             - dev
     mysql:
         image: mariadb:10.11.6
-        ports:
-            - "${PORT_MYSQL:-3333}:3306"
         volumes:
             - mysql_data:/var/lib/mysql
             - ./docker/mysql-config:/etc/mysql/mysql.conf.d

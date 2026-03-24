@@ -51,8 +51,6 @@ PORT_CDN=$(prompt_value PORT_CDN 8081 "CDN HTTPS port")
 echo
 PORT_WIKI=$(prompt_value PORT_WIKI 8084 "MediaWiki port")
 echo
-PORT_MYSQL=$(prompt_value PORT_MYSQL 3333 "MySQL host port")
-echo
 COMPOSE_PROJECT_NAME=$(prompt_value COMPOSE_PROJECT_NAME dockerstiny "Compose project name")
 echo
 
@@ -61,7 +59,6 @@ COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME
 PORT_WWW=$PORT_WWW
 PORT_CDN=$PORT_CDN
 PORT_WIKI=$PORT_WIKI
-PORT_MYSQL=$PORT_MYSQL
 EOF
 ok "Port configuration saved to .env"
 
