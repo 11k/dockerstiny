@@ -11,7 +11,7 @@ skip()  { printf '\033[1;33m[SKIP]\033[0m  %s\n' "$*"; }
 ok()    { printf '\033[1;32m[ OK ]\033[0m  %s\n' "$*"; }
 err()   { printf '\033[1;31m[ERR]\033[0m   %s\n' "$*" >&2; }
 
-prompt_port() {
+prompt_value() {
   local varname="$1" default="$2" description="$3"
   local current="${!varname:-$default}"
   read -rp "  $description [$current]: " input
@@ -45,16 +45,19 @@ if [ -f "$ENV_FILE" ]; then
 fi
 
 info "Configure host-facing ports (press Enter to accept defaults):"
-PORT_WWW=$(prompt_port PORT_WWW 8080 "Website HTTPS port")
+PORT_WWW=$(prompt_value PORT_WWW 8080 "Website HTTPS port")
 echo
-PORT_CDN=$(prompt_port PORT_CDN 8081 "CDN HTTPS port")
+PORT_CDN=$(prompt_value PORT_CDN 8081 "CDN HTTPS port")
 echo
-PORT_WIKI=$(prompt_port PORT_WIKI 8084 "MediaWiki port")
+PORT_WIKI=$(prompt_value PORT_WIKI 8084 "MediaWiki port")
 echo
-PORT_MYSQL=$(prompt_port PORT_MYSQL 3333 "MySQL host port")
+PORT_MYSQL=$(prompt_value PORT_MYSQL 3333 "MySQL host port")
+echo
+COMPOSE_PROJECT_NAME=$(prompt_value COMPOSE_PROJECT_NAME dockerstiny "Compose project name")
 echo
 
 cat > "$ENV_FILE" <<EOF
+COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME
 PORT_WWW=$PORT_WWW
 PORT_CDN=$PORT_CDN
 PORT_WIKI=$PORT_WIKI
