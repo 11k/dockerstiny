@@ -187,7 +187,7 @@ info "Linking local chat-gui into website..."
 ok "chat-gui linked"
 
 info "Building website static assets..."
-(cd website && npm run build)
+(cd website && npm run build:dev)
 ok "Website built"
 
 # ── 8. Build Docker images ───────────────────────────────────────────────────
