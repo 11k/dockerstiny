@@ -234,6 +234,10 @@ return [
         'webhookCallbackUrl' => 'https://localhost/facebook/webhook',
     ],
 
+    'rumble' => [
+        'apiKey' => '',
+    ],
+
     'vimeo' => [
         'folder' => '',
     ],
