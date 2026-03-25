@@ -170,6 +170,10 @@ ok "Port configuration applied to all config files"
 
 # ── 7. Install dependencies & build ─────────────────────────────────────────
 
+info "Installing website PHP dependencies..."
+(cd website && composer install)
+ok "Website PHP dependencies installed"
+
 info "Installing chat-gui dependencies..."
 (cd chat-gui && npm ci)
 ok "chat-gui dependencies installed"
