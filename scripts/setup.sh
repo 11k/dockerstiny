@@ -212,6 +212,18 @@ until docker compose --profile dev exec website true 2>/dev/null; do
   sleep 2
 done
 
+info "Waiting for MySQL to be ready..."
+retries=30
+until docker compose --profile dev exec mysql mariadb -u destiny -pAslanIsEvil -e "SELECT 1" destinygg &>/dev/null; do
+  retries=$((retries - 1))
+  if [ "$retries" -le 0 ]; then
+    err "Timed out waiting for MySQL"
+    exit 1
+  fi
+  sleep 2
+done
+ok "MySQL is ready"
+
 info "Running database migrations..."
 docker compose --profile dev exec website vendor/bin/doctrine-migrations migrations:migrate -q
 ok "Migrations complete"
