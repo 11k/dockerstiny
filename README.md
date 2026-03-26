@@ -22,6 +22,7 @@ cd dockerstiny
 
 3. Access the site at `https://localhost:8080` (or whichever port you chose during setup).
 4. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
+5. When you're done, run `./scripts/cleanup.sh` to tear down the dev environment.
 
 ## Wikistiny instructions
 1. Run the install script to initialize the wiki.
