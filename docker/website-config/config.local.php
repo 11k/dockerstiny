@@ -65,7 +65,7 @@ return [
     ],
 
     'redis' => [
-        'host' => 'localhost',
+        'host' => 'redis',
         'port' => 6379,
         'database' => 0,
         'scriptdir' => _BASEDIR . '/scripts/redis/',
@@ -232,6 +232,10 @@ return [
     'facebookbroadcaster' => [
         'webhookVerifyToken' => '',
         'webhookCallbackUrl' => 'https://localhost/facebook/webhook',
+    ],
+
+    'rumble' => [
+        'apiKey' => '',
     ],
 
     'vimeo' => [

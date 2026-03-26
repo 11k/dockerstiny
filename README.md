@@ -3,90 +3,30 @@
 A collection of Dockerfiles and config files that enable you to easily run Destiny.gg (website and chat) locally on your computer for development purposes. Tested on macOS, Linux, and Windows (via Linux on WSL2).
 
 ## Requirements
-* [Docker](https://www.docker.com/)
-* [Docker Compose](https://docs.docker.com/compose/)
+* [Docker](https://www.docker.com/) (with [Docker Compose](https://docs.docker.com/compose/))
 * [npm](https://www.npmjs.com/)
-* [mkcert](https://github.com/FiloSottile/mkcert)
+* [Composer](https://getcomposer.org/)
+* [mkcert](https://github.com/FiloSottile/mkcert) — if using Linux on WSL2, mkcert must be installed on Windows (see [Windows mkcert instructions](#windows-mkcert-instructions) below)
 
-## Instructions
-1. Download/install the requirements above. If using Linux on WSL2, mkcert must be installed on Windows. See the additional Windows mkcert instructions below.
-2. Clone this repo.
+## Setup
+1. Clone this repo and `cd` into it.
 ```
 git clone https://github.com/11k/dockerstiny.git
-```
-
-3. Navigate into the project folder.
-```
 cd dockerstiny
 ```
 
-4. Use `mkcert` to create and install a locally-trusted certificate authority.
+2. Run the setup script. It will clone repos, generate TLS certs, install dependencies, build assets, and run database migrations.
 ```
-mkcert -install
-```
-
-5. Generate a certificate and private key.
-```
-mkcert -cert-file docker/nginx-certs/dgg.pem -key-file docker/nginx-certs/dgg-key.pem localhost 127.0.0.1 host.docker.internal
+./scripts/setup.sh
 ```
 
-6. Copy the CA certificate created by mkcert into `ca-certs`.
+3. Start the dev environment.
 ```
-cp "$(mkcert -CAROOT)/rootCA.pem" docker/ca-certs/
-```
-
-7. Clone [`destinygg/website-private`](https://github.com/destinygg/website-private), [`destinygg/chat-private`](https://github.com/destinygg/chat-private), [`destinygg/chat-gui`](https://github.com/destinygg/chat-gui), [`destinygg/live-ws`](https://github.com/destinygg/live-ws), and [`destinygg/Wikistiny`](https://github.com/destinygg/Wikistiny) into `dockerstiny`.
-```
-git clone git@github.com:destinygg/website-private.git website
-git clone git@github.com:destinygg/chat-private.git chat
-git clone git@github.com:destinygg/chat-gui.git
-git clone git@github.com:destinygg/live-ws.git
-git clone git@github.com:destinygg/Wikistiny.git
+docker compose --profile dev up
 ```
 
-8. Copy the included website and chat config files to the appropriate locations.
-```
-cp docker/website-config/config.local.php website/config/
-cp docker/website-config/.env website/.env
-cp docker/chat-config/settings.cfg chat/
-cp docker/live-ws-config/.env live-ws/.env
-```
-
-9. Install all Node.js dependencies for the chat frontend.
-```
-cd chat-gui
-npm ci
-```
-
-10. Install the website's dependencies.
-```
-cd ../website
-npm ci
-```
-
-11. Link the local copy of `chat-gui` rather than using the version installed from the npm registry.
-```
-npm link ../chat-gui
-```
-
-12. Generate the site's static assets.
-```
-npm run build
-```
-
-13. Head back into the project folder and build/run. This command will take some time.
-```
-cd ..
-docker-compose --profile dev up
-```
-
-14. Run migrations to initialize the database.
-```
-docker compose --profile dev exec website vendor/bin/doctrine-migrations migrations:migrate -q
-```
-
-15. Access the site via `https://localhost:8080`.
-16. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
+4. Access the site at `https://localhost:8080` (or whichever port you chose during setup).
+5. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
 
 ## Wikistiny instructions
 1. Run the install script to initialize the wiki.
@@ -117,7 +57,7 @@ mkcert-v1.4.3-windows-amd64.exe -cert-file dgg.pem -key-file dgg-key.pem localho
 cp $(wslpath "$(wslvar HOMEDRIVE)$(wslvar HOMEPATH)")/Downloads/dgg* docker/nginx-certs
 ```
 
-8. Do the same with the CA certificate.
+7. Do the same with the CA certificate.
 ```
 cp $(wslpath "$(mkcert-v1.4.3-windows-amd64.exe -CAROOT)\rootCA.pem") docker/ca-certs/
 ```
