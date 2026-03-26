@@ -216,14 +216,9 @@ info "Running database migrations..."
 docker compose --profile dev exec website vendor/bin/doctrine-migrations migrations:migrate -q
 ok "Migrations complete"
 
-info "Stopping containers..."
-docker compose --profile dev down
-ok "Containers stopped"
-
 # ── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
-ok "Setup complete!"
-info "Run 'docker compose --profile dev up' to start the dev environment"
+ok "Setup complete! Dev environment is running."
 info "Access the site at https://localhost:$PORT_WWW"
 info "Log in as admin: https://localhost:$PORT_WWW/impersonate?username=admin"

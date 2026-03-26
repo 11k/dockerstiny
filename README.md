@@ -15,18 +15,13 @@ git clone https://github.com/11k/dockerstiny.git
 cd dockerstiny
 ```
 
-2. Run the setup script. It will clone repos, generate TLS certs, install dependencies, build assets, and run database migrations.
+2. Run the setup script. It will clone repos, generate TLS certs, install dependencies, build assets, run database migrations, and start the dev environment.
 ```
 ./scripts/setup.sh
 ```
 
-3. Start the dev environment.
-```
-docker compose --profile dev up
-```
-
-4. Access the site at `https://localhost:8080` (or whichever port you chose during setup).
-5. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
+3. Access the site at `https://localhost:8080` (or whichever port you chose during setup).
+4. Go to `https://localhost:8080/impersonate?username=admin` to log in as the admin.
 
 ## Wikistiny instructions
 1. Run the install script to initialize the wiki.
