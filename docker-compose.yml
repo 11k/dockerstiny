@@ -43,6 +43,29 @@ services:
             - /www/www.destiny.gg/vendor/
         profiles:
             - dev
+    worker:
+        build:
+            context: .
+            dockerfile: ./docker/Dockerfile-website
+        command:
+            - php
+            - bin/worker
+            - messenger:consume
+            - async
+            - --limit=100
+            - --time-limit=3600
+            - --memory-limit=256M
+            - -vv
+        depends_on:
+            - redis
+            - mysql
+        volumes:
+            - ./website:/www/www.destiny.gg
+            - /www/www.destiny.gg/vendor/
+        deploy:
+            replicas: 2
+        profiles:
+            - dev
     chat:
         build:
             context: .
