@@ -21,6 +21,9 @@ services:
         build:
             context: .
             dockerfile: ./docker/Dockerfile-website
+        # `composer install` runs on every start so the anonymous vendor volume
+        # picks up dependency changes without a `docker compose down -v` dance.
+        command: sh -c "composer install --no-interaction --no-progress && exec php-fpm"
         depends_on:
             - redis
             - mysql
@@ -33,7 +36,7 @@ services:
         build:
             context: .
             dockerfile: ./docker/Dockerfile-website
-        command: ["php", "-f", "./cron/index.php"]
+        command: sh -c "composer install --no-interaction --no-progress && exec php -f ./cron/index.php"
         depends_on:
             - redis
             - mysql
@@ -46,15 +49,7 @@ services:
         build:
             context: .
             dockerfile: ./docker/Dockerfile-website
-        command:
-            - php
-            - bin/worker
-            - messenger:consume
-            - async
-            - --limit=100
-            - --time-limit=3600
-            - --memory-limit=256M
-            - -vv
+        command: sh -c "composer install --no-interaction --no-progress && exec php bin/worker messenger:consume async --limit=100 --time-limit=3600 --memory-limit=256M -vv"
         restart: unless-stopped
         depends_on:
             - redis
