@@ -84,6 +84,11 @@ server {
     # Allow `/.well-known` for custom Bluesky handle verification.
     location ~ ^/\.(?!well-known).* { deny all; }
 
+    location = /service-worker.js {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        expires off;
+    }
+
     location ~* \.(avif|jpg|jpeg|png|gif|ico|css|js|map|svg)$ {
         expires 12h;
     }
