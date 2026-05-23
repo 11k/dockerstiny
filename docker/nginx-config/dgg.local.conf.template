@@ -60,6 +60,8 @@ server {
     access_log /dev/stdout;
     error_log /dev/stdout;
 
+    client_max_body_size 100M;
+
     error_page 403 /errors/403.html;
     error_page 404 /errors/404.html;
     error_page 500 /errors/500.html;
