@@ -43,16 +43,7 @@ services:
     worker:
         build:
             context: .
-            dockerfile: ./docker/Dockerfile-website
-        command:
-            - php
-            - bin/worker
-            - messenger:consume
-            - async
-            - --limit=100
-            - --time-limit=3600
-            - --memory-limit=256M
-            - -vv
+            dockerfile: ./docker/Dockerfile-worker
         restart: unless-stopped
         depends_on:
             - redis
