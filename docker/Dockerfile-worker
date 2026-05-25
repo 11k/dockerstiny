@@ -6,10 +6,16 @@ COPY docker/php-config/php.ini-development $PHP_INI_DIR/php.ini
 RUN apt-get update && apt-get install -y \
     zip \
     git \
-    libxml2-dev
+    libxml2-dev \
+    libpng-dev \
+    libjpeg-dev \
+    libfreetype6-dev \
+    libwebp-dev
 
 RUN docker-php-ext-install pdo_mysql
 RUN docker-php-ext-install soap
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
+    && docker-php-ext-install gd
 
 RUN pecl install -o -f redis \
     &&  rm -rf /tmp/pear \
