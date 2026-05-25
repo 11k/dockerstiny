@@ -37,6 +37,10 @@ server {
 
         expires 12h;
     }
+    location ^~ /uploads/ {
+        expires 12h;
+        try_files $uri =404;
+    }
     location ~ ^/\. { deny  all; }
     location ~* \.(avif|jpg|jpe?g|png|gif|ico|css|js|map|svg|eot|ttf|woff|woff2|wasm|otf)$ {
         expires 12h;
