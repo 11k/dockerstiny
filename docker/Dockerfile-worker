@@ -6,6 +6,7 @@ COPY docker/php-config/php.ini-development $PHP_INI_DIR/php.ini
 RUN apt-get update && apt-get install -y \
     zip \
     git \
+    ffmpeg \
     libxml2-dev \
     libpng-dev \
     libjpeg-dev \
