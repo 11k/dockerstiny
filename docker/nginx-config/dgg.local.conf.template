@@ -136,3 +136,45 @@ server {
         include       fastcgi.conf;
     }
 }
+
+# Public tunnel vhost. Replicate delivers TTS prediction results by webhook,
+# which it can only do if the callback is reachable from the internet, so an
+# ngrok tunnel forwards here. Matched by the tunnel hostname, so ordinary
+# local browsing (Host: 127.0.0.1) still gets the full site above.
+#
+# Only the webhook path is served — everything else 404s. This environment
+# runs with allowImpersonation on, so exposing the whole site would hand
+# anyone who finds the tunnel an admin session.
+#
+# setup.sh replaces the hostname below with NGROK_DOMAIN from .env. Left
+# unset it stays .invalid, a reserved TLD that no request can arrive for, so
+# this block is inert until a tunnel is actually configured.
+server {
+    listen 8080 ssl;
+    server_name tunnel.invalid;
+    root /www/www.destiny.gg/public;
+
+    ssl_certificate /etc/nginx/certs/dgg.pem;
+    ssl_certificate_key /etc/nginx/certs/dgg-key.pem;
+
+    access_log /dev/stdout;
+    error_log /dev/stdout;
+
+    location ~ ^/api/tts/webhook/ {
+        rewrite ^ /index.php last;
+    }
+
+    # internal: reachable only via the rewrite above, so a direct request for
+    # /index.php cannot use this vhost to reach the rest of the app.
+    location = /index.php {
+        internal;
+
+        fastcgi_pass  website:9000;
+        fastcgi_index index.php;
+        include       fastcgi.conf;
+    }
+
+    location / {
+        return 404;
+    }
+}
