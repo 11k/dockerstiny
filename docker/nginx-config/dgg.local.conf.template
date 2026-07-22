@@ -79,6 +79,19 @@ server {
         proxy_set_header Host $host;
     }
 
+    # The OBS player connects to $WS_API_URL/tts, which is /dggApi/tts here.
+    # live-ws routes upgrades by exact pathname, so the prefix has to come off
+    # or the socket falls through to the main dggApi server: the TTS room then
+    # looks empty, and an empty room deliberately holds the queue, so playback
+    # never advances past the clip that is airing.
+    location /dggApi/tts {
+        proxy_pass http://live-ws:42069/tts;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+    }
+
     location /dggApi {
         proxy_pass http://live-ws:42069;
         proxy_http_version 1.1;
