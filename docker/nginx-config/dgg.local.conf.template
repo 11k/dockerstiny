@@ -145,9 +145,13 @@ server {
 # Only the webhook path is served — everything else 404s. This environment
 # runs with allowImpersonation on, so exposing the whole site would hand
 # anyone who finds the tunnel an admin session.
+#
+# setup.sh replaces the hostname below with NGROK_DOMAIN from .env. Left
+# unset it stays .invalid, a reserved TLD that no request can arrive for, so
+# this block is inert until a tunnel is actually configured.
 server {
     listen 8080 ssl;
-    server_name wandering-quiet-otter.ngrok-free.dev;
+    server_name tunnel.invalid;
     root /www/www.destiny.gg/public;
 
     ssl_certificate /etc/nginx/certs/dgg.pem;

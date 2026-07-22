@@ -50,7 +50,7 @@ live-ws ↔ redis (pub/sub for live streaming updates)
 | File | Purpose |
 |------|---------|
 | `docker-compose.yml` | Service orchestration |
-| `.env` | Port configuration (`PORT_WWW`, `PORT_CDN`, `PORT_WIKI`) |
+| `.env` | Port configuration (`PORT_WWW`, `PORT_CDN`, `PORT_WIKI`) and `NGROK_DOMAIN` (tunnel host for TTS webhooks; blank disables that vhost) |
 | `website/config/config.local.php` | Website app config (CORS, crypto keys, embeds) |
 | `chat/settings.cfg` | Chat server settings (Redis, MySQL, API) |
 | `live-ws/.env` | Live WS config (ports, API URL/key, Redis) |

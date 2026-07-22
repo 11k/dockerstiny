@@ -54,11 +54,19 @@ echo
 COMPOSE_PROJECT_NAME=$(prompt_value COMPOSE_PROJECT_NAME dockerstiny "Compose project name")
 echo
 
+# Replicate delivers TTS results by webhook and cannot reach localhost, so
+# generating TTS locally needs a tunnel pointed at the callback. Optional —
+# everything except TTS generation works without one.
+info "Configure the TTS webhook tunnel (leave blank if you are not generating TTS):"
+NGROK_DOMAIN=$(prompt_value NGROK_DOMAIN "" "ngrok domain, e.g. your-name.ngrok-free.dev")
+echo
+
 cat > "$ENV_FILE" <<EOF
 COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME
 PORT_WWW=$PORT_WWW
 PORT_CDN=$PORT_CDN
 PORT_WIKI=$PORT_WIKI
+NGROK_DOMAIN=$NGROK_DOMAIN
 EOF
 ok "Port configuration saved to .env"
 
@@ -124,11 +132,14 @@ copy_config docker/live-ws-config/.env              live-ws/.env
 
 info "Generating config files from templates..."
 
-# Generate nginx config from template (replace known defaults with configured ports)
+# Generate nginx config from template (replace known defaults with configured
+# ports, and the webhook tunnel vhost with the configured ngrok domain — left
+# blank the placeholder stays, keeping that vhost unmatchable)
 sed \
   -e "s/listen 8081 ssl;/listen $PORT_CDN ssl;/" \
   -e "s/listen 8080 ssl;/listen $PORT_WWW ssl;/" \
   -e "s/:8080/:$PORT_WWW/g" \
+  -e "s/server_name tunnel\.invalid;/server_name ${NGROK_DOMAIN:-tunnel.invalid};/" \
   docker/nginx-config/dgg.local.conf.template > docker/nginx-config/dgg.local.conf
 
 # Generate wiki config from template
