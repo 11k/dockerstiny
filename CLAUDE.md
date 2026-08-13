@@ -82,7 +82,7 @@ npm run dev      # watch mode
 npm run build    # production build
 
 # Database migrations (from website container)
-docker compose --profile dev exec website php migrations.php
+docker compose --profile dev exec website vendor/bin/doctrine-migrations migrate --no-interaction
 
 # Generate a diff migration (from website container)
 docker compose --profile dev exec website vendor/bin/doctrine-migrations migrations:diff
