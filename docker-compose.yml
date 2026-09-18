@@ -122,7 +122,7 @@ services:
             MYSQL_PASSWORD: AslanIsEvil
         # cron and chat give up rather than retry if the database isn't
         # accepting connections yet, so dependents wait for this.
-        healthcheck:
+        healthcheck: &mysql-healthcheck
             test: ["CMD", "mariadb", "-udestiny", "-pAslanIsEvil", "-e", "SELECT 1", "destinygg"]
             interval: 2s
             timeout: 5s
@@ -174,7 +174,10 @@ services:
     website-test:
         image: dgg/website:dev
         depends_on:
-            - mysql-test
+            # The suite skips its schema setup — then fails every database
+            # test — if it can't connect on the first try.
+            mysql-test:
+                condition: service_healthy
         volumes:
             - ${WEBSITE_DIR}/config:/www/www.destiny.gg/config/
             - ${WEBSITE_DIR}/lib:/www/www.destiny.gg/lib/
@@ -197,6 +200,7 @@ services:
             MYSQL_DATABASE: destinygg
             MYSQL_USER: destiny
             MYSQL_PASSWORD: AslanIsEvil
+        healthcheck: *mysql-healthcheck
         logging:
             driver: none
         profiles:

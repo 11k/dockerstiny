@@ -811,7 +811,24 @@ cmd_create() {
   print_urls "$name"
 }
 
+# Traefik takes a moment to notice new containers; until then it answers 404
+# itself. Wait for the environment's nginx to be the one responding.
+wait_for_route() {
+  load_env "$1"
+  command -v curl >/dev/null 2>&1 || return 0
+  local i
+  for i in $(seq 1 20); do
+    if curl -sk -o /dev/null --max-time 2 --resolve "$DGG_HOST:$DGG_PORT:127.0.0.1" \
+      -D - "https://$DGG_HOST:$DGG_PORT/" 2>/dev/null | grep -qi '^server: nginx'; then
+      return 0
+    fi
+    sleep 1
+  done
+  warn "https://$DGG_HOST$DGG_PORT_SUFFIX isn't answering yet (dgg proxy status, dgg logs $1 nginx)"
+}
+
 print_urls() {
+  wait_for_route "$1"
   load_env "$1"
   local site="https://$DGG_HOST$DGG_PORT_SUFFIX"
   info "Site:  $site"
