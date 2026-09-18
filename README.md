@@ -60,8 +60,16 @@ Browser ─→ Traefik (127.0.0.1:443, routes by hostname) ─┬→ dgg-foo: ng
 
 * **One proxy, no port juggling.** A shared Traefik container owns port 443 and finds environments through container labels. `*.localhost` resolves to loopback on its own, and because every environment has its own hostname, logins in one don't clobber another's cookies. Change the domain or port in `dgg.conf` (then `dgg render --all`, `dgg proxy restart`, and delete `docker/nginx-certs/wildcard.*` + re-run `dgg init` for a new domain).
 * **Config is rendered, not copied.** Settings shared by all environments — keys, secrets, feature config — live in `config/` (gitignored; seeded by `dgg init`). Each environment's URLs are layered on top into `envs/<name>/config/` whenever it starts. Edit `config/website.config.php` once and every environment sees it; nothing environment-specific lives in a repo.
-* **Databases start from a snapshot.** The first environment migrates an empty database and saves it as the `default` snapshot; later ones unpack it and only run migrations newer than it. `dgg snapshot save <env>` replaces it with that environment's data (handy once one has useful seed data), `--as <name>` keeps several, and `dgg create --snapshot <name>` picks one.
+* **Databases start from a snapshot.** The first environment migrates an empty database and saves it as the `default` snapshot; later ones unpack it and only run migrations newer than it. `dgg snapshot save <env> --force` replaces it with that environment's data (handy once one has useful seed data), `--as <name>` keeps several, and `dgg create --snapshot <name>` picks one.
 * **Dependencies are cloned.** New worktrees get `node_modules` and `vendor` as copy-on-write clones of the canonical checkouts when the lockfiles match, and a real install when they don't.
+
+### Working with coding agents
+dgg is meant to be driven by an agent as comfortably as by hand:
+* `dgg status <name> --json` and `dgg ls --json` give structured state; `dgg status` exits non-zero when a service is down (and knows cron exiting is normal).
+* Without a terminal, output is plain and short. Install and build output goes to `envs/<name>/create.log` and only surfaces on failure (`DGG_VERBOSE=1` to stream it).
+* Every environment gets a generated `envs/<name>/CLAUDE.md` with its URL, its worktrees and branches, and how each kind of change takes effect.
+* Claude Code permission rules ship in `.claude/settings.json`, and dgg writes the same rules into each environment and worktree (Claude Code doesn't read settings from parent directories). Routine commands run without prompts; `dgg rm`, `dgg snapshot save|rm` and `scripts/cleanup.sh` always ask; files holding live API keys (`config/` and the rendered chat/live-ws configs) can't be read.
+* `dgg snapshot save` refuses to replace an existing snapshot without `--force`.
 
 ### TTS webhooks
 Replicate can't reach localhost, so TTS generation needs an ngrok tunnel, and the tunnel has one domain. Set `NGROK_DOMAIN` in `dgg.conf`, then point it at whichever environment needs it:
@@ -72,7 +80,7 @@ dgg tunnel off
 Only `/api/tts/webhook/` is served on the tunnel hostname.
 
 ### Moving from the single-environment setup
-Old `dockerstiny`-style projects keep running until you remove them (`docker compose -p <project> down`), but this checkout's Compose file no longer drives them. To carry a database over, stop its MySQL container and run `dgg snapshot save --volume <project>_mysql_data`. `dgg init` seeds `config/` from the existing `website/config/config.local.php`, `chat/settings.cfg` and `live-ws/.env`.
+Old `dockerstiny`-style projects keep running until you remove them (`docker compose -p <project> down`), but this checkout's Compose file no longer drives them. To carry a database over, stop its MySQL container and run `dgg snapshot save --volume <project>_mysql_data` (add `--force` to replace the default snapshot, or `--as <name>` to keep it alongside). `dgg init` seeds `config/` from the existing `website/config/config.local.php`, `chat/settings.cfg` and `live-ws/.env`.
 
 ## Wikistiny instructions
 1. Create the environment with `--wiki`. The wiki is served at `https://wiki-<name>.dgg.localhost`.

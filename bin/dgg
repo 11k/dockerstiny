@@ -48,12 +48,38 @@ repo_url() {
 
 # ── Output ───────────────────────────────────────────────────────────────────
 
-info() { printf '\033[1;34m[INFO]\033[0m  %s\n' "$*"; }
-skip() { printf '\033[1;33m[SKIP]\033[0m  %s\n' "$*"; }
-warn() { printf '\033[1;33m[WARN]\033[0m  %s\n' "$*" >&2; }
-ok()   { printf '\033[1;32m[ OK ]\033[0m  %s\n' "$*"; }
-err()  { printf '\033[1;31m[ERR]\033[0m   %s\n' "$*" >&2; }
+# Colour only for a person at a terminal; scripts and coding agents get plain
+# text (https://no-color.org).
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_INFO=$'\033[1;34m' C_WARN=$'\033[1;33m' C_OK=$'\033[1;32m' C_ERR=$'\033[1;31m' C_OFF=$'\033[0m'
+else
+  C_INFO="" C_WARN="" C_OK="" C_ERR="" C_OFF=""
+fi
+
+info() { printf '%s[INFO]%s  %s\n' "$C_INFO" "$C_OFF" "$*"; }
+skip() { printf '%s[SKIP]%s  %s\n' "$C_WARN" "$C_OFF" "$*"; }
+warn() { printf '%s[WARN]%s  %s\n' "$C_WARN" "$C_OFF" "$*" >&2; }
+ok()   { printf '%s[ OK ]%s  %s\n' "$C_OK" "$C_OFF" "$*"; }
+err()  { printf '%s[ERR]%s   %s\n' "$C_ERR" "$C_OFF" "$*" >&2; }
 die()  { err "$@"; exit 1; }
+
+# Installs and builds are hundreds of lines nobody reads unless they fail.
+# quietly <command…> sends them to $LOG_FILE and shows the tail on failure;
+# DGG_VERBOSE=1 streams them as before.
+LOG_FILE=""
+quietly() {
+  if [ -n "${DGG_VERBOSE:-}" ] || [ -z "$LOG_FILE" ]; then
+    "$@"
+    return
+  fi
+  printf '\n── %s  (%s)\n' "$*" "$(date '+%H:%M:%S')" >> "$LOG_FILE"
+  if ! "$@" >> "$LOG_FILE" 2>&1; then
+    err "Failed: $*"
+    err "Last lines of ${LOG_FILE#"$ROOT"/}:"
+    tail -n 25 "$LOG_FILE" >&2
+    return 1
+  fi
+}
 
 # ── Settings ─────────────────────────────────────────────────────────────────
 
@@ -163,12 +189,98 @@ dc() {
   IFS=',' read -ra p <<< "$profiles"
   local x
   for x in "${p[@]}"; do [ -n "$x" ] && args+=(--profile "$x"); done
+  if [ ! -t 1 ]; then args+=(--progress quiet); fi
   docker compose --project-directory "$ROOT" -f "$ROOT/docker-compose.yml" \
     --env-file "$(env_file "$name")" "${args[@]}" "$@"
 }
 
 running_count() {
   docker ps -q --filter "label=com.docker.compose.project=dgg-$1" | wc -l | tr -d ' '
+}
+
+# ── Status ───────────────────────────────────────────────────────────────────
+
+json_str() {
+  local v="$1"
+  v="${v//\\/\\\\}"; v="${v//\"/\\\"}"; v="${v//$'\n'/\\n}"; v="${v//$'\t'/\\t}"
+  printf '"%s"' "$v"
+}
+
+# The services this environment is configured to run.
+env_services() {
+  load_env "$1"
+  local out=(nginx website redis mysql) svc
+  for svc in chat live-ws cron; do
+    if has_profile "$svc"; then out+=("$svc"); fi
+  done
+  if has_profile worker && [ "$WORKER_REPLICAS" != "0" ]; then out+=(worker); fi
+  if has_profile wiki; then out+=(wikistiny); fi
+  echo "${out[*]}"
+}
+
+# One line per enabled service: service<TAB>state<TAB>ok|problem<TAB>note
+# Several containers of one service (workers) collapse to the worst one.
+env_service_states() {
+  local name="$1" ps svc state health code verdict note line
+  ps="$(dc "$name" ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' 2>/dev/null || true)"
+  for svc in $(env_services "$name"); do
+    state="not created"; verdict="problem"; note="start it with: dgg up $name"
+    while IFS='|' read -r s_svc s_state s_health s_code; do
+      [ "$s_svc" = "$svc" ] || continue
+      state="$s_state"; health="$s_health"; code="$s_code"
+      if [ "$s_state" = "running" ] && [ "$s_health" != "unhealthy" ]; then
+        verdict="ok"; note=""
+        if [ -n "$s_health" ]; then state="running ($s_health)"; fi
+      elif [ "$svc" = "cron" ] && [ "$s_state" = "exited" ] && [ "$s_code" = "0" ]; then
+        # cron/index.php runs the due tasks once and exits; that's its job.
+        verdict="ok"; state="exited (0)"; note="expected: cron is one-shot. Run it again with: dgg up $name cron"
+      else
+        verdict="problem"; state="$s_state${s_code:+ ($s_code)}"; note="see: dgg logs $name $svc"
+        break
+      fi
+    done <<< "$ps"
+    printf '%s\t%s\t%s\t%s\n' "$svc" "$state" "$verdict" "$note"
+  done
+}
+
+# One line per worktree: service<TAB>path<TAB>branch (- = detached)<TAB>clean|dirty
+env_worktrees() {
+  local name="$1" svc dir branch dirty
+  for svc in "${WORKTREE_SERVICES[@]}"; do
+    dir="$(env_dir "$name")/$svc"
+    [ -d "$dir" ] || continue
+    branch="$(git -C "$dir" branch --show-current 2>/dev/null || true)"
+    if worktree_dirty "$dir"; then dirty="dirty"; else dirty="clean"; fi
+    # "-" stands for detached: read collapses empty tab-separated fields.
+    printf '%s\t%s\t%s\t%s\n' "$svc" "$dir" "${branch:--}" "$dirty"
+  done
+}
+
+status_json() {
+  local name="$1" site first svc state verdict note path branch dirty healthy="true" services="" trees=""
+  load_env "$name"
+  site="https://$DGG_HOST$DGG_PORT_SUFFIX"
+  first=1
+  while IFS=$'\t' read -r svc state verdict note; do
+    [ -n "$svc" ] || continue
+    [ "$verdict" = "ok" ] || healthy="false"
+    [ -n "$first" ] || services+=","
+    first=""
+    services+="{\"service\":$(json_str "$svc"),\"state\":$(json_str "$state"),\"ok\":$([ "$verdict" = ok ] && echo true || echo false),\"note\":$(json_str "$note")}"
+  done < <(env_service_states "$name")
+  first=1
+  while IFS=$'\t' read -r svc path branch dirty; do
+    [ "$branch" != "-" ] || branch=""
+    [ -n "$svc" ] || continue
+    [ -n "$first" ] || trees+=","
+    first=""
+    trees+="{\"service\":$(json_str "$svc"),\"path\":$(json_str "$path"),\"branch\":$([ -n "$branch" ] && json_str "$branch" || echo null),\"dirty\":$([ "$dirty" = dirty ] && echo true || echo false)}"
+  done < <(env_worktrees "$name")
+  printf '{"name":%s,"url":%s,"admin_url":%s,"wiki_url":%s,"dir":%s,"healthy":%s,"proxy_running":%s,"services":[%s],"worktrees":[%s],"images":{"chat":%s,"live-ws":%s}}' \
+    "$(json_str "$name")" "$(json_str "$site")" "$(json_str "$site/impersonate?username=admin")" \
+    "$(has_profile wiki && json_str "https://$DGG_WIKI_HOST$DGG_PORT_SUFFIX" || echo null)" \
+    "$(json_str "$(env_dir "$name")")" "$healthy" "$(proxy_running && echo true || echo false)" \
+    "$services" "$trees" "$(json_str "$CHAT_IMAGE")" "$(json_str "$LIVE_WS_IMAGE")"
 }
 
 # ── Git worktrees ────────────────────────────────────────────────────────────
@@ -250,6 +362,8 @@ clone_dir() {
   fi
 }
 
+in_dir() { local d="$1"; shift; (cd "$d" && "$@"); }
+
 same_file() { [ -f "$1" ] && [ -f "$2" ] && cmp -s "$1" "$2"; }
 
 # install_deps <dir> <canonical dir> <lockfile> <deps dir> <marker> <install command…>
@@ -267,7 +381,7 @@ install_deps() {
     clone_dir "$canon/$deps" "$dir/$deps"
   else
     info "$(basename "$dir"): $lock differs from ${canon#"$ROOT"/} — running $*"
-    (cd "$dir" && "$@")
+    quietly in_dir "$dir" "$@"
   fi
 }
 
@@ -408,6 +522,168 @@ EOF
       -e "s|^CDN_ORIGIN=.*|CDN_ORIGIN=https://$DGG_CDN_HOST$DGG_PORT_SUFFIX|" \
       "$SHARED_CONFIG_DIR/website.env" > "$WEBSITE_DIR/.env"
   fi
+
+  write_agent_files "$name"
+}
+
+# ── Coding agents ────────────────────────────────────────────────────────────
+
+# How an agent should invoke this script: by name if it's on PATH.
+dgg_invocation() {
+  if command -v dgg >/dev/null 2>&1; then echo dgg; else echo "$ROOT/bin/dgg"; fi
+}
+
+# Claude Code permission rules for working with environments. Claude Code
+# reads settings only from the directory a session starts in, never from its
+# parents, so the same rules are written wherever a session might start: the
+# environment's directory and each worktree. (.claude/settings.json at the
+# root of this repo carries them for sessions started there.)
+#
+# Rules are evaluated deny → ask → allow, so the ask entries hold even if a
+# broader allow is added later.
+agent_settings_json() {
+  local rules_allow="" rules_ask="" bin sub
+  for bin in dgg "$ROOT/bin/dgg"; do
+    rules_allow+="      \"Bash($bin)\","$'\n'
+    for sub in ls status url path ps logs help up down restart build test migrate render "snapshot ls" "proxy status"; do
+      rules_allow+="      \"Bash($bin $sub:*)\","$'\n'
+    done
+    for sub in rm remove destroy "snapshot save" "snapshot rm"; do
+      rules_ask+="      \"Bash($bin $sub:*)\","$'\n'
+    done
+  done
+  rules_ask+="      \"Bash($ROOT/scripts/cleanup.sh:*)\""
+  cat <<JSON
+{
+  "permissions": {
+    "allow": [
+${rules_allow%,$'\n'}
+    ],
+    "ask": [
+$rules_ask
+    ],
+    "deny": [
+      "Read(/$SHARED_CONFIG_DIR/**)",
+      "Read(/$ENVS_DIR/*/config/chat/**)",
+      "Read(/$ENVS_DIR/*/config/live-ws/**)",
+      "Read(/$(repo_dir website)/config/config.local.php)",
+      "Read(/$(repo_dir chat)/settings.cfg)",
+      "Read(/$(repo_dir live-ws)/.env)"
+    ]
+  }
+}
+JSON
+}
+
+# Make sure a generated file inside a worktree never shows up in git status.
+# Uses the repo's local exclude file — nothing committed, nothing shared.
+ensure_ignored() {
+  local worktree="$1" path="$2" exclude
+  git -C "$worktree" check-ignore -q "$path" 2>/dev/null && return 0
+  exclude="$(git -C "$worktree" rev-parse --git-common-dir)/info/exclude"
+  [[ "$exclude" = /* ]] || exclude="$worktree/$exclude"
+  mkdir -p "$(dirname "$exclude")"
+  grep -qxF "$path" "$exclude" 2>/dev/null || echo "$path" >> "$exclude"
+}
+
+write_agent_files() {
+  local name="$1" dir dgg site svc path branch dirty rows="" absent="" base="" path_note=""
+  dir="$(env_dir "$name")"
+  dgg="dgg"
+  load_env "$name"
+  site="https://$DGG_HOST$DGG_PORT_SUFFIX"
+  if [ "$(dgg_invocation)" != "dgg" ]; then
+    path_note="- **\`dgg\` is not on PATH on this machine.** Wherever this file says \`dgg\`, run \`$ROOT/bin/dgg\`."$'\n'
+  fi
+
+  while IFS=$'\t' read -r svc path branch dirty; do
+    [ "$branch" != "-" ] || branch=""
+    [ -n "$svc" ] || continue
+    case "$svc" in
+      website)
+        if [ -n "$branch" ]; then
+          rows+="| website | \`website/\` | \`$branch\` | PHP and Twig changes are live. Assets (JS/TS/SCSS): \`npm run build:dev\` in \`website/\`, or \`npm run watch\` while iterating. New migrations: \`$dgg migrate $name\`. |"$'\n'
+        else
+          rows+="| website | \`website/\` | detached (origin's default branch) | Not being changed in this environment — it's here because every environment needs its own asset build. Don't commit here. |"$'\n'
+        fi ;;
+      chat-gui)
+        rows+="| chat-gui | \`chat-gui/\` | \`$branch\` | Compiled into the website bundle (\`website/node_modules/dgg-chat-gui\` links here): rebuild the website's assets with \`npm run build:dev\` in \`website/\`. |"$'\n' ;;
+      chat|live-ws)
+        rows+="| $svc | \`$svc/\` | \`$branch\` | Compiled into its image: \`$dgg build $name $svc\` rebuilds and restarts it. |"$'\n' ;;
+    esac
+  done < <(env_worktrees "$name")
+
+  for svc in chat live-ws; do
+    if ! has_profile "$svc"; then
+      if [ "$svc" = "chat" ]; then
+        absent+="- **chat is not running here**, so \`/ws\` returns 502."$'\n'
+      else
+        absent+="- **live-ws is not running here**, so \`/dggApi\` returns 502."$'\n'
+      fi
+    elif [ ! -d "$dir/$svc" ]; then
+      base+="- **$svc** runs a shared image built from origin's default branch. There is no checkout of it here; changing it means recreating the environment with \`--with $svc\`."$'\n'
+    fi
+  done
+  if [ ! -d "$dir/chat-gui" ]; then
+    base+="- **chat-gui** is the canonical checkout at \`$(repo_dir chat-gui)\`, shared with other environments — don't edit it for this one."$'\n'
+  fi
+  if ! has_profile cron; then absent+="- **cron is not running here.**"$'\n'; fi
+  if ! has_profile worker || [ "$WORKER_REPLICAS" = "0" ]; then
+    absent+="- **No queue workers here**, so queued (async) jobs are never processed."$'\n'
+  fi
+
+  cat > "$dir/CLAUDE.md" <<MARKDOWN
+# dgg environment: $name
+
+Generated by dgg and rewritten on every \`$dgg up\` — don't edit. The system as a whole is described in \`$ROOT/CLAUDE.md\`.
+
+$path_note- **Site:** $site
+- **Log in as admin:** open $site/impersonate?username=admin (any username works)
+- **Health:** \`$dgg status $name\` (\`--json\` for structured output; exits non-zero when something is wrong). cron showing \`exited (0)\` is normal — it runs its tasks once and exits.
+- From anywhere inside this directory the environment name can be omitted: \`$dgg status\`, \`$dgg logs chat\`.
+
+## Code
+
+| Service | Directory | Branch | How a change takes effect |
+|---|---|---|---|
+$rows
+$base$absent
+## Checking your work
+
+\`\`\`bash
+$dgg status $name                      # is everything up?
+$dgg test $name                        # website PHPUnit suite (isolated test DB)
+$dgg test $name --filter SomeTest      # arguments go to phpunit
+$dgg logs $name website                # last 100 lines; add -f, --tail N or --since 5m
+$dgg exec $name website <command>      # run something in a container
+curl -s -o /dev/null -w '%{http_code}\\n' $site/
+\`\`\`
+
+The TLS cert is trusted system-wide (mkcert), so browsers and curl need no flags.
+
+## Rules
+
+- Never run \`docker compose\` directly — the Compose file only works through dgg. For anything dgg lacks: \`$dgg compose $name -- <args>\`.
+- These are generated; don't edit them: everything in \`config/\` here, \`website/config/config.local.php\`, \`website/.env\`, \`.claude/settings*.json\`.
+- Settings shared by all environments live in \`$SHARED_CONFIG_DIR\` and contain live API keys. Don't read them; if one needs changing, ask the user.
+- Ask the user before \`$dgg rm\`, \`$dgg snapshot save\` or \`scripts/cleanup.sh\`: they delete work or change what every future environment starts from.
+- This environment's database is its own. Other environments are someone else's work in progress — leave them alone.
+MARKDOWN
+
+  mkdir -p "$dir/.claude"
+  agent_settings_json > "$dir/.claude/settings.json"
+  # In a worktree the committed .claude/settings.json belongs to that repo, so
+  # ours goes in settings.local.json — and only if nothing is there, since
+  # Claude Code saves the user's own "always allow" choices in the same file.
+  while IFS=$'\t' read -r svc path branch dirty; do
+    [ "$branch" != "-" ] || branch=""
+    [ -n "$svc" ] || continue
+    if [ ! -f "$path/.claude/settings.local.json" ]; then
+      mkdir -p "$path/.claude"
+      agent_settings_json > "$path/.claude/settings.local.json"
+    fi
+    ensure_ignored "$path" ".claude/settings.local.json"
+  done < <(env_worktrees "$name")
 }
 
 # ── Certificates ─────────────────────────────────────────────────────────────
@@ -493,7 +769,8 @@ base_image_tag() {
 ensure_base_image() {
   if image_exists "$(base_image_tag "$1")"; then return 0; fi
   info "Building $(base_image_tag "$1") (one-time)..."
-  build_base_image "$1"
+  mkdir -p "$STATE_DIR"
+  LOG_FILE="${LOG_FILE:-$STATE_DIR/build.log}" quietly build_base_image "$1"
 }
 
 # The shared images this environment's enabled services run on.
@@ -722,6 +999,8 @@ cmd_create() {
   for svc in "${WORKTREE_SERVICES[@]}"; do git -C "$(repo_dir "$svc")" worktree prune 2>/dev/null || true; done
 
   mkdir -p "$dir"
+  LOG_FILE="$dir/create.log"
+  : > "$LOG_FILE"
   # From here on a failure leaves a half-built environment; say how to clear it.
   trap 'err "create failed — clean up with: dgg rm '"$name"' --force"' ERR
 
@@ -761,7 +1040,7 @@ cmd_create() {
 
   if [ -n "$do_build" ]; then
     info "Building website static assets..."
-    (cd "$dir/website" && npm run build:dev >/dev/null) || die "Asset build failed — run it yourself: cd $dir/website && npm run build:dev"
+    quietly in_dir "$dir/website" npm run build:dev || die "Asset build failed — retry with: cd $dir/website && npm run build:dev"
     ok "Website assets built"
   elif [ -f "$(repo_dir website)/config/manifest.php" ] && [ -d "$(repo_dir website)/static" ]; then
     # The app won't boot without an asset manifest, so borrow the canonical
@@ -780,7 +1059,7 @@ cmd_create() {
   if [ -n "$built" ]; then
     info "Building images from this environment's worktrees: $built"
     # shellcheck disable=SC2086
-    dc "$name" build $built
+    quietly dc "$name" build $built
   fi
 
   trap - ERR
@@ -907,6 +1186,27 @@ cmd_rm() {
 cmd_ls() {
   require_init
   local name total running status trees svc branch
+  if [ "${1:-}" = "--json" ]; then
+    local first=1 path dirty
+    printf '['
+    while read -r name; do
+      [ -n "$name" ] || continue
+      load_env "$name"
+      trees=""
+      while IFS=$'\t' read -r svc path branch dirty; do
+        [ "$branch" != "-" ] || branch=""
+        [ -n "$svc" ] || continue
+        trees+="${trees:+,}{\"service\":$(json_str "$svc"),\"branch\":$([ -n "$branch" ] && json_str "$branch" || echo null),\"dirty\":$([ "$dirty" = dirty ] && echo true || echo false)}"
+      done < <(env_worktrees "$name")
+      [ -n "$first" ] || printf ','
+      first=""
+      printf '{"name":%s,"running_containers":%s,"url":%s,"dir":%s,"worktrees":[%s]}' \
+        "$(json_str "$name")" "$(running_count "$name")" "$(json_str "https://$DGG_HOST$DGG_PORT_SUFFIX")" \
+        "$(json_str "$(env_dir "$name")")" "$trees"
+    done < <(list_envs)
+    printf ']\n'
+    return
+  fi
   printf '%-16s %-10s %-42s %s\n' NAME STATUS URL WORKTREES
   while read -r name; do
     [ -n "$name" ] || continue
@@ -924,6 +1224,40 @@ cmd_ls() {
     printf '%-16s %-10s %-42s %s\n' "$name" "$status" "https://$DGG_HOST$DGG_PORT_SUFFIX" "${trees# }"
   done < <(list_envs)
   if ! proxy_running; then warn "The proxy isn't running (dgg proxy up)"; fi
+}
+
+cmd_status() {
+  require_init
+  local json="" args=() a
+  for a in "$@"; do
+    if [ "$a" = "--json" ]; then json=1; else args+=("$a"); fi
+  done
+  resolve_env "${args[@]}"
+  if [ -n "$json" ]; then
+    status_json "$ENV_NAME"; echo
+    return
+  fi
+  load_env "$ENV_NAME"
+  local svc state verdict note path branch dirty problems=0
+  echo "$ENV_NAME — https://$DGG_HOST$DGG_PORT_SUFFIX"
+  echo
+  printf '%-10s %-20s %s\n' SERVICE STATE NOTE
+  while IFS=$'\t' read -r svc state verdict note; do
+    [ -n "$svc" ] || continue
+    [ "$verdict" = "ok" ] || problems=$((problems + 1))
+    printf '%-10s %-20s %s\n' "$svc" "$state" "$note"
+  done < <(env_service_states "$ENV_NAME")
+  echo
+  printf '%-10s %-28s %s\n' WORKTREE BRANCH PATH
+  while IFS=$'\t' read -r svc path branch dirty; do
+    [ "$branch" != "-" ] || branch=""
+    [ -n "$svc" ] || continue
+    [ "$dirty" = "dirty" ] && branch="${branch:-(detached)} *" || branch="${branch:-(detached)}"
+    printf '%-10s %-28s %s\n' "$svc" "$branch" "${path#"$ROOT"/}"
+  done < <(env_worktrees "$ENV_NAME")
+  if ! proxy_running; then warn "The proxy isn't running (dgg proxy up)"; problems=$((problems + 1)); fi
+  echo
+  if [ "$problems" = "0" ]; then ok "Healthy"; else err "$problems problem(s)"; return 1; fi
 }
 
 cmd_url() {
@@ -945,7 +1279,17 @@ cmd_path() {
 cmd_logs() {
   require_init
   resolve_env "$@"
-  dc "$ENV_NAME" logs "${ARGS[@]}"
+  # Everything since the containers were created can be enormous; default to
+  # a recent window unless the caller sets their own.
+  local a bounded=""
+  for a in "${ARGS[@]}"; do
+    case "$a" in --tail|--tail=*|-n|--since|--since=*|--until|--until=*) bounded=1 ;; esac
+  done
+  if [ -z "$bounded" ]; then
+    dc "$ENV_NAME" logs --tail 100 "${ARGS[@]}"
+  else
+    dc "$ENV_NAME" logs "${ARGS[@]}"
+  fi
 }
 
 cmd_ps() {
@@ -958,7 +1302,13 @@ cmd_exec() {
   require_init
   resolve_env "$@"
   [ ${#ARGS[@]} -gt 0 ] || die "Usage: dgg exec [name] <service> <command…>"
-  dc "$ENV_NAME" exec "${ARGS[@]}"
+  # Without a terminal on stdin, docker refuses to allocate one and the
+  # command fails — so don't ask for one.
+  if [ -t 0 ]; then
+    dc "$ENV_NAME" exec "${ARGS[@]}"
+  else
+    dc "$ENV_NAME" exec -T "${ARGS[@]}"
+  fi
 }
 
 cmd_compose() {
@@ -1089,20 +1439,26 @@ cmd_snapshot() {
         printf '%-20s %6s  %s\n' "$(basename "$f" .tar.gz)" "$(du -h "$f" | cut -f1 | tr -d ' ')" "$(date -r "$f" '+%Y-%m-%d %H:%M')"
       done ;;
     save)
-      local label="default" volume="" name="" force=""
+      local label="default" volume="" name="" force="" allow_running=""
       while [ $# -gt 0 ]; do
         case "$1" in
           --as) label="$2"; shift 2 ;;
           --volume) volume="$2"; shift 2 ;;
           --force) force=1; shift ;;
+          --allow-running) allow_running=1; shift ;;
           *) name="$1"; shift ;;
         esac
       done
       [[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid snapshot name '$label'"
+      # Every future environment starts from these, so replacing one is
+      # deliberate, never a side effect.
+      if [ -f "$(snapshot_path "$label")" ] && [ -z "$force" ]; then
+        die "Snapshot '$label' already exists. Pass --force to replace it, or --as <name> to save alongside it."
+      fi
       if [ -n "$volume" ]; then
         docker volume inspect "$volume" >/dev/null 2>&1 || die "No Docker volume named '$volume'"
-        if [ -z "$force" ] && [ -n "$(docker ps -q --filter "volume=$volume")" ]; then
-          die "A running container is using '$volume'; copying live database files is unsafe. Stop it first, or pass --force."
+        if [ -z "$allow_running" ] && [ -n "$(docker ps -q --filter "volume=$volume")" ]; then
+          die "A running container is using '$volume'; copying live database files is unsafe. Stop it first, or pass --allow-running."
         fi
         snapshot_save_volume "$volume" "$label"
       else
@@ -1114,7 +1470,7 @@ cmd_snapshot() {
       [ -f "$(snapshot_path "$1")" ] || die "No snapshot named '$1'"
       rm -f "$(snapshot_path "$1")"
       ok "Removed snapshot '$1'" ;;
-    *) die "Usage: dgg snapshot ls | save [env] [--as name] [--volume docker-volume] | rm <name>" ;;
+    *) die "Usage: dgg snapshot ls | save [env] [--as name] [--volume docker-volume] [--force] | rm <name>" ;;
   esac
 }
 
@@ -1163,7 +1519,9 @@ Environments
       --no-snapshot           Start from an empty, freshly migrated DB
       --no-build              Skip the website asset build
       --no-up                 Set everything up but don't start containers
-  ls                      List environments
+  ls [--json]             List environments
+  status [name] [--json]  Per-service health, worktrees and URLs; exits
+                          non-zero if something is wrong
   up [name] [svc…]        Start (re-renders config first)
   down [name]             Stop; keeps the database and worktrees
   rm <name> [--force]     Delete containers, volumes, worktrees (not branches)
@@ -1182,8 +1540,9 @@ Working in one ([name] can be omitted inside envs/<name>/)
   compose [name] -- args  Raw docker compose for anything else
 
 Shared
-  snapshot ls | save [env] [--as NAME] [--volume VOL] | rm NAME
+  snapshot ls | save [env] [--as NAME] [--volume VOL] [--force] | rm NAME
                           Database snapshots new environments start from
+                          (--force to replace an existing one)
   tunnel [name [--run] | off]
                           Route the ngrok tunnel (TTS webhooks) to one env
   proxy up|down|restart|logs|status
@@ -1202,6 +1561,7 @@ main() {
     restart) cmd_restart "$@" ;;
     rm|remove|destroy) cmd_rm "$@" ;;
     ls|list) cmd_ls "$@" ;;
+    status) cmd_status "$@" ;;
     url) cmd_url "$@" ;;
     path) cmd_path "$@" ;;
     logs) cmd_logs "$@" ;;
