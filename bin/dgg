@@ -545,7 +545,7 @@ agent_settings_json() {
   local rules_allow="" rules_ask="" bin sub
   for bin in dgg "$ROOT/bin/dgg"; do
     rules_allow+="      \"Bash($bin)\","$'\n'
-    for sub in ls status url path ps logs help up down restart build test migrate render "snapshot ls" "proxy status"; do
+    for sub in ls status url path ps logs help up down restart build test migrate render "snapshot ls" "snapshot restore" "proxy status"; do
       rules_allow+="      \"Bash($bin $sub:*)\","$'\n'
     done
     for sub in rm remove destroy "snapshot save" "snapshot rm"; do
@@ -656,6 +656,7 @@ $dgg test $name                        # website PHPUnit suite (isolated test DB
 $dgg test $name --filter SomeTest      # arguments go to phpunit
 $dgg logs $name website                # last 100 lines; add -f, --tail N or --since 5m
 $dgg exec $name website <command>      # run something in a container
+$dgg snapshot restore $name            # reset this environment's database (old one kept as snapshot backup-$name)
 curl -s -o /dev/null -w '%{http_code}\\n' $site/
 \`\`\`
 
@@ -841,14 +842,56 @@ snapshot_save_env() {
   fi
 }
 
-# Unpack a snapshot into a not-yet-started environment. Going through the
-# mysql service lets Compose create (and own) the volume.
+# Replace the contents of an environment's MySQL volume with a snapshot. The
+# server must not be running. Going through the mysql service lets Compose
+# create (and own) the volume when the environment has never started.
 snapshot_restore() {
   local name="$1" label="$2"
   info "Restoring database snapshot '$label'..."
   dc "$name" run --rm --no-deps --entrypoint sh -v "$SNAPSHOT_DIR:/snap:ro" mysql \
-    -c "tar -xzf /snap/$label.tar.gz -C /var/lib/mysql" >/dev/null
+    -c "find /var/lib/mysql -mindepth 1 -delete && tar -xzf /snap/$label.tar.gz -C /var/lib/mysql" >/dev/null
   ok "Database restored"
+}
+
+# Reset an existing environment's database to a snapshot. What's there now is
+# kept as the snapshot backup-<env>, so a restore can always be undone.
+snapshot_restore_env() {
+  local name="$1" label="$2" backup="$3" migrate="$4" was_running="" volume="dgg-${1}_mysql_data"
+  if [ "$(running_count "$name")" != "0" ]; then
+    was_running=1
+    info "Stopping $name..."
+    dc "$name" stop >/dev/null 2>&1
+  fi
+
+  if [ -n "$backup" ] && docker volume inspect "$volume" >/dev/null 2>&1; then
+    info "Keeping the current database as snapshot 'backup-$name'..."
+    snapshot_save_volume "$volume" "backup-$name"
+  fi
+
+  snapshot_restore "$name" "$label"
+
+  # Bring up just enough to finish the job, whether or not it was running.
+  render_env "$name"
+  ensure_env_images "$name"
+  ensure_proxy
+  dc "$name" up -d website >/dev/null 2>&1
+  wait_for_mysql "$name"
+  # Sessions and cached rows in Redis describe the database that was just
+  # replaced.
+  dc "$name" exec -T redis redis-cli FLUSHALL >/dev/null 2>&1 || warn "Couldn't flush Redis"
+  if [ -n "$migrate" ]; then
+    run_migrations "$name"
+  else
+    skip "Migrations (--no-migrate): the schema is exactly the snapshot's"
+  fi
+
+  if [ -n "$was_running" ]; then
+    info "Starting $name again..."
+    dc "$name" up -d >/dev/null 2>&1
+    wait_for_route "$name"
+  else
+    dc "$name" stop >/dev/null 2>&1
+  fi
 }
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -1179,6 +1222,8 @@ cmd_rm() {
     fi
   done
   if [ -f "$TUNNEL_FILE" ] && grep -q "dgg-$name@docker" "$TUNNEL_FILE"; then rm -f "$TUNNEL_FILE"; fi
+  # Its restore undo buffer means nothing without it.
+  rm -f "$(snapshot_path "backup-$name")"
   rm -rf "$dir"
   ok "Removed '$name' (its branches are untouched)"
 }
@@ -1465,12 +1510,29 @@ cmd_snapshot() {
         resolve_env ${name:+"$name"}
         snapshot_save_env "$ENV_NAME" "$label"
       fi ;;
+    restore)
+      local backup=1 migrate=1 pos=()
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --no-backup) backup=""; shift ;;
+          --no-migrate) migrate=""; shift ;;
+          -*) die "Unknown option for snapshot restore: $1" ;;
+          *) pos+=("$1"); shift ;;
+        esac
+      done
+      resolve_env "${pos[@]}"
+      local label="${ARGS[0]:-default}"
+      [ ${#ARGS[@]} -le 1 ] || die "Usage: dgg snapshot restore [env] [snapshot] [--no-backup] [--no-migrate]"
+      [ -f "$(snapshot_path "$label")" ] || die "No snapshot named '$label'. See: dgg snapshot ls"
+      snapshot_restore_env "$ENV_NAME" "$label" "$backup" "$migrate"
+      ok "'$ENV_NAME' now has the '$label' database (logins were reset)"
+      if [ -n "$backup" ]; then info "Undo with: dgg snapshot restore $ENV_NAME backup-$ENV_NAME"; fi ;;
     rm)
       [ $# -gt 0 ] || die "Usage: dgg snapshot rm <snapshot>"
       [ -f "$(snapshot_path "$1")" ] || die "No snapshot named '$1'"
       rm -f "$(snapshot_path "$1")"
       ok "Removed snapshot '$1'" ;;
-    *) die "Usage: dgg snapshot ls | save [env] [--as name] [--volume docker-volume] [--force] | rm <name>" ;;
+    *) die "Usage: dgg snapshot ls | save [env] [--as name] [--volume docker-volume] [--force] | restore [env] [snapshot] | rm <name>" ;;
   esac
 }
 
@@ -1543,6 +1605,10 @@ Shared
   snapshot ls | save [env] [--as NAME] [--volume VOL] [--force] | rm NAME
                           Database snapshots new environments start from
                           (--force to replace an existing one)
+  snapshot restore [env] [NAME] [--no-backup] [--no-migrate]
+                          Reset an environment's database to a snapshot
+                          (default: default), then migrate. The old database
+                          is kept as snapshot backup-<env>.
   tunnel [name [--run] | off]
                           Route the ngrok tunnel (TTS webhooks) to one env
   proxy up|down|restart|logs|status

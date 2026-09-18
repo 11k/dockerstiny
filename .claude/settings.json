@@ -17,6 +17,7 @@
       "Bash(dgg migrate:*)",
       "Bash(dgg render:*)",
       "Bash(dgg snapshot ls:*)",
+      "Bash(dgg snapshot restore:*)",
       "Bash(dgg proxy status:*)",
       "Bash(bin/dgg)",
       "Bash(bin/dgg ls:*)",
@@ -34,6 +35,7 @@
       "Bash(bin/dgg migrate:*)",
       "Bash(bin/dgg render:*)",
       "Bash(bin/dgg snapshot ls:*)",
+      "Bash(bin/dgg snapshot restore:*)",
       "Bash(bin/dgg proxy status:*)",
       "Bash(./bin/dgg)",
       "Bash(./bin/dgg ls:*)",
@@ -51,6 +53,7 @@
       "Bash(./bin/dgg migrate:*)",
       "Bash(./bin/dgg render:*)",
       "Bash(./bin/dgg snapshot ls:*)",
+      "Bash(./bin/dgg snapshot restore:*)",
       "Bash(./bin/dgg proxy status:*)"
     ],
     "ask": [
