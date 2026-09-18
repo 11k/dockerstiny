@@ -32,7 +32,7 @@ $wgMetaNamespace = "Dggwiki";
 $wgScriptPath = "";
 
 ## The protocol and server name to use in fully-qualified URLs
-$wgServer = "http://localhost:8084";
+$wgServer = "@@WIKI_URL@@";
 
 ## The URL path to static resources (images, scripts, etc.)
 $wgResourceBasePath = $wgScriptPath;
@@ -174,8 +174,8 @@ wfLoadSkin( 'Vector' );
 require_once "$IP/extensions/Wikistiny/ExtensionSettings.php";
 
 wfLoadExtension( 'Wikistiny' );
-$wgWikistinyApiOrigin = 'https://host.docker.internal:8080';
+$wgWikistinyApiOrigin = '@@SITE_URL@@';
 $wgWikistinyApiKey = 'blubstinya';
 $wgWikistinyMinimumEditorSubTier = 1;
 $wgWikistinyMinimumSuperEditorSubTier = 3;
-$wgWikistinyLoginUrl = 'https://localhost:8080/login?follow=/wiki';
+$wgWikistinyLoginUrl = '@@SITE_URL@@/login?follow=/wiki';

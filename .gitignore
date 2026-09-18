@@ -4,7 +4,17 @@ website/
 live-ws/
 Wikistiny/
 
+# dgg: per-environment worktrees/config/state, shared base config (holds
+# secrets), local settings, and base worktrees + DB snapshots
+envs/
+config/
+dgg.conf
+.dgg/
+proxy/dynamic/tunnel.yml
+
+# Legacy single-environment setup
 docker-compose.override.yml
 .env
 docker/nginx-config/dgg.local.conf
+docker/nginx-config/domain.conf
 docker/wiki-config/LocalSettings.php

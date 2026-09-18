@@ -1,0 +1,8 @@
+# Wildcard cert for the routes Traefik terminates itself (the wikis). The main
+# site is TLS passthrough and never touches this.
+tls:
+    stores:
+        default:
+            defaultCertificate:
+                certFile: /certs/wildcard.pem
+                keyFile: /certs/wildcard-key.pem
