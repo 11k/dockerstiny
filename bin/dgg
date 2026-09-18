@@ -1,0 +1,1191 @@
+#!/usr/bin/env bash
+#
+# dgg — create and manage Destiny.gg dev environments on demand.
+#
+# An environment is a Compose project (dgg-<name>) plus git worktrees for the
+# services being changed, reached at https://<name>.<domain> through the shared
+# Traefik proxy. Everything an environment owns lives in envs/<name>/.
+#
+# Run `dgg help` for usage.
+
+set -euo pipefail
+
+# Resolve symlinks so the script can be linked onto PATH.
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+  _dir="$(cd "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  [[ "$_self" != /* ]] && _self="$_dir/$_self"
+done
+ROOT="$(cd "$(dirname "$_self")/.." && pwd)"
+unset _self _dir
+
+ENVS_DIR="$ROOT/envs"
+SHARED_CONFIG_DIR="$ROOT/config"
+STATE_DIR="$ROOT/.dgg"
+BASE_DIR="$STATE_DIR/base"
+SNAPSHOT_DIR="$STATE_DIR/snapshots"
+CONF_FILE="$ROOT/dgg.conf"
+CERT_DIR="$ROOT/docker/nginx-certs"
+CA_DIR="$ROOT/docker/ca-certs"
+TUNNEL_FILE="$ROOT/proxy/dynamic/tunnel.yml"
+PROXY_NETWORK="dgg-proxy"
+MYSQL_IMAGE="mariadb:10.11.6"
+
+# Services that can get a worktree, and the optional runtime services.
+WORKTREE_SERVICES=(website chat chat-gui live-ws)
+OPTIONAL_SERVICES=(chat live-ws cron worker)
+
+repo_url() {
+  case "$1" in
+    website)   echo "git@github.com:destinygg/website-private.git" ;;
+    chat)      echo "git@github.com:destinygg/chat-private.git" ;;
+    chat-gui)  echo "git@github.com:destinygg/chat-gui.git" ;;
+    live-ws)   echo "git@github.com:destinygg/live-ws.git" ;;
+    Wikistiny) echo "git@github.com:destinygg/Wikistiny.git" ;;
+  esac
+}
+
+# ── Output ───────────────────────────────────────────────────────────────────
+
+info() { printf '\033[1;34m[INFO]\033[0m  %s\n' "$*"; }
+skip() { printf '\033[1;33m[SKIP]\033[0m  %s\n' "$*"; }
+warn() { printf '\033[1;33m[WARN]\033[0m  %s\n' "$*" >&2; }
+ok()   { printf '\033[1;32m[ OK ]\033[0m  %s\n' "$*"; }
+err()  { printf '\033[1;31m[ERR]\033[0m   %s\n' "$*" >&2; }
+die()  { err "$@"; exit 1; }
+
+# ── Settings ─────────────────────────────────────────────────────────────────
+
+DGG_DOMAIN="dgg.localhost"
+DGG_PORT="443"
+NGROK_DOMAIN=""
+DGG_REPOS_DIR=""
+
+load_conf() {
+  if [ -f "$CONF_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$CONF_FILE"
+  fi
+  REPOS_DIR="${DGG_REPOS_DIR:-$ROOT}"
+  if [ "$DGG_PORT" = "443" ]; then PORT_SUFFIX=""; else PORT_SUFFIX=":$DGG_PORT"; fi
+}
+
+write_conf() {
+  cat > "$CONF_FILE" <<EOF
+# dgg settings. Run \`dgg render --all\` (and \`dgg proxy up\`) after changing these.
+
+# Environments are served at https://<name>.\$DGG_DOMAIN. Anything under
+# .localhost resolves to loopback without DNS setup.
+DGG_DOMAIN=$DGG_DOMAIN
+
+# The proxy's HTTPS port on 127.0.0.1.
+DGG_PORT=$DGG_PORT
+
+# ngrok domain for TTS webhooks (Replicate can't reach localhost). Blank
+# disables the tunnel vhost. See \`dgg tunnel\`.
+NGROK_DOMAIN=$NGROK_DOMAIN
+
+# Where the canonical clones (website, chat, chat-gui, live-ws, Wikistiny)
+# live. Blank means this directory.
+DGG_REPOS_DIR=$DGG_REPOS_DIR
+EOF
+}
+
+require_init() {
+  [ -f "$CONF_FILE" ] || die "Not initialized. Run: dgg init"
+}
+
+# ── Environments ─────────────────────────────────────────────────────────────
+
+env_dir()  { echo "$ENVS_DIR/$1"; }
+env_file() { echo "$ENVS_DIR/$1/env"; }
+env_exists() { [ -f "$(env_file "$1")" ]; }
+
+validate_name() {
+  [[ "$1" =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]] ||
+    die "Invalid environment name '$1' (lowercase letters, digits and dashes; it becomes a hostname)"
+}
+
+list_envs() {
+  [ -d "$ENVS_DIR" ] || return 0
+  local f
+  for f in "$ENVS_DIR"/*/env; do
+    [ -f "$f" ] && basename "$(dirname "$f")"
+  done
+  return 0
+}
+
+# The environment whose directory we're standing in, if any.
+cwd_env() {
+  case "$PWD/" in
+    "$ENVS_DIR"/*)
+      local rest="${PWD#"$ENVS_DIR"/}"
+      echo "${rest%%/*}"
+      ;;
+  esac
+}
+
+# Sets ENV_NAME and ARGS: the environment is the first argument if it names
+# one, otherwise the one containing the current directory.
+resolve_env() {
+  ARGS=("$@")
+  if [ $# -gt 0 ] && env_exists "$1"; then
+    ENV_NAME="$1"
+    ARGS=("${@:2}")
+    return
+  fi
+  ENV_NAME="$(cwd_env)"
+  if [ -z "$ENV_NAME" ] || ! env_exists "$ENV_NAME"; then
+    if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+      die "No environment named '$1'. See: dgg ls"
+    fi
+    die "Which environment? Pass a name, or run this from inside envs/<name>/"
+  fi
+}
+
+load_env() {
+  # shellcheck disable=SC1090
+  source "$(env_file "$1")"
+}
+
+has_profile() {
+  [[ ",$DGG_PROFILES," == *",$1,"* ]]
+}
+
+# dc <env> <compose args…>
+dc() {
+  local name="$1"; shift
+  local profiles p args=()
+  profiles="$(source "$(env_file "$name")" && echo "$DGG_PROFILES")"
+  # Tearing down has to see every service, enabled or not.
+  case " $* " in *" down "*|*" rm "*) profiles="chat,live-ws,cron,worker,wiki,test" ;; esac
+  IFS=',' read -ra p <<< "$profiles"
+  local x
+  for x in "${p[@]}"; do [ -n "$x" ] && args+=(--profile "$x"); done
+  docker compose --project-directory "$ROOT" -f "$ROOT/docker-compose.yml" \
+    --env-file "$(env_file "$name")" "${args[@]}" "$@"
+}
+
+running_count() {
+  docker ps -q --filter "label=com.docker.compose.project=dgg-$1" | wc -l | tr -d ' '
+}
+
+# ── Git worktrees ────────────────────────────────────────────────────────────
+
+repo_dir() { echo "$REPOS_DIR/$1"; }
+
+require_repo() {
+  [ -d "$(repo_dir "$1")/.git" ] || die "Repo '$1' not found at $(repo_dir "$1"). Run: dgg init"
+}
+
+fetch_repo() {
+  git -C "$(repo_dir "$1")" fetch --quiet origin 2>/dev/null ||
+    warn "Couldn't fetch $1 (offline?) — using what's already here"
+}
+
+# origin's default branch as a ref, e.g. origin/master.
+default_ref() {
+  local repo ref
+  repo="$(repo_dir "$1")"
+  if ref="$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"; then
+    echo "$ref"; return
+  fi
+  for ref in origin/master origin/main; do
+    if git -C "$repo" rev-parse --verify --quiet "$ref" >/dev/null; then echo "$ref"; return; fi
+  done
+  echo HEAD
+}
+
+# add_worktree <service> <dest> [branch]
+# With a branch: check it out, creating it from origin's default branch if it
+# doesn't exist anywhere. Without: a detached checkout of the default branch.
+add_worktree() {
+  local svc="$1" dest="$2" branch="${3:-}" repo base
+  repo="$(repo_dir "$svc")"
+  base="$(default_ref "$svc")"
+  if [ -z "$branch" ]; then
+    git -C "$repo" worktree add --quiet --detach "$dest" "$base"
+    ok "$svc: detached worktree at $base"
+  elif git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$repo" worktree add --quiet "$dest" "$branch" ||
+      die "$svc: couldn't check out '$branch' — is it checked out somewhere else? (git -C $repo worktree list)"
+    ok "$svc: worktree on existing branch $branch"
+  elif git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    git -C "$repo" worktree add --quiet --track -b "$branch" "$dest" "origin/$branch"
+    ok "$svc: worktree on $branch (tracking origin/$branch)"
+  else
+    git -C "$repo" worktree add --quiet --no-track -b "$branch" "$dest" "$base"
+    ok "$svc: worktree on new branch $branch (from $base)"
+  fi
+}
+
+# remove_worktree <service> <dir> [--force]
+remove_worktree() {
+  local svc="$1" dir="$2" force="${3:-}" repo
+  repo="$(repo_dir "$svc")"
+  [ -e "$dir" ] || return 0
+  if [ -n "$force" ]; then
+    git -C "$repo" worktree remove --force "$dir"
+  else
+    git -C "$repo" worktree remove "$dir"
+  fi
+}
+
+# Tracked changes, or untracked files that aren't ignored.
+worktree_dirty() {
+  [ -n "$(git -C "$1" status --porcelain 2>/dev/null)" ]
+}
+
+# ── Dependencies ─────────────────────────────────────────────────────────────
+
+# Copy-on-write clone where the filesystem supports it (APFS, btrfs, xfs):
+# instant, and costs no disk until files diverge.
+clone_dir() {
+  local src="$1" dst="$2"
+  if [ "$(uname)" = "Darwin" ]; then
+    cp -c -R "$src" "$dst" 2>/dev/null || cp -R "$src" "$dst"
+  else
+    cp -R --reflink=auto "$src" "$dst"
+  fi
+}
+
+same_file() { [ -f "$1" ] && [ -f "$2" ] && cmp -s "$1" "$2"; }
+
+# install_deps <dir> <canonical dir> <lockfile> <deps dir> <install command…>
+# Reuse the canonical checkout's installed dependencies when the lockfiles
+# match; otherwise install from scratch.
+install_deps() {
+  local dir="$1" canon="$2" lock="$3" deps="$4"; shift 4
+  if [ -d "$dir/$deps" ]; then
+    skip "$(basename "$dir"): $deps already present"
+  elif [ -d "$canon/$deps" ] && same_file "$dir/$lock" "$canon/$lock"; then
+    info "$(basename "$dir"): cloning $deps from $canon"
+    clone_dir "$canon/$deps" "$dir/$deps"
+  else
+    info "$(basename "$dir"): running $*"
+    (cd "$dir" && "$@")
+  fi
+}
+
+# Point the website's dgg-chat-gui dependency at a chat-gui checkout.
+link_chat_gui() {
+  local website="$1" chat_gui="$2"
+  rm -rf "$website/node_modules/dgg-chat-gui"
+  ln -s "$chat_gui" "$website/node_modules/dgg-chat-gui"
+}
+
+# ── Config rendering ─────────────────────────────────────────────────────────
+
+# seed_shared <dest name> <live file in canonical repo> <template>
+seed_shared() {
+  local dest="$SHARED_CONFIG_DIR/$1" live="$2" template="$3"
+  if [ -f "$dest" ]; then
+    skip "Shared config exists: config/$1"
+  elif [ -f "$live" ]; then
+    cp "$live" "$dest"
+    ok "Seeded config/$1 from ${live#"$ROOT"/}"
+  else
+    cp "$template" "$dest"
+    ok "Seeded config/$1 from ${template#"$ROOT"/}"
+  fi
+}
+
+write_env_file() {
+  local name="$1" dir
+  dir="$(env_dir "$name")"
+  cat > "$dir/env" <<EOF
+# Generated by dgg. The choices made at \`dgg create\` live here; hostnames and
+# ports are refreshed from dgg.conf by \`dgg render\`.
+DGG_ENV=$name
+COMPOSE_PROJECT_NAME=dgg-$name
+DGG_ROOT=$ROOT
+DGG_ENV_DIR=$dir
+DGG_SHARED_CONFIG_DIR=$SHARED_CONFIG_DIR
+DGG_PROXY_NETWORK=$PROXY_NETWORK
+DGG_HOST=$name.$DGG_DOMAIN
+DGG_CDN_HOST=cdn-$name.$DGG_DOMAIN
+DGG_WIKI_HOST=wiki-$name.$DGG_DOMAIN
+DGG_PORT=$DGG_PORT
+DGG_PORT_SUFFIX=$PORT_SUFFIX
+DGG_PROFILES=$DGG_PROFILES
+WORKER_REPLICAS=$WORKER_REPLICAS
+WEBSITE_DIR=$dir/website
+DGG_BASE_WEBSITE_DIR=$(repo_dir website)
+CHAT_IMAGE=$CHAT_IMAGE
+CHAT_DIR=$CHAT_DIR
+LIVE_WS_IMAGE=$LIVE_WS_IMAGE
+LIVE_WS_DIR=$LIVE_WS_DIR
+WIKISTINY_DIR=$(repo_dir Wikistiny)
+EOF
+}
+
+# Regenerate everything under envs/<name>/config, plus the two generated
+# (gitignored) files the website worktree needs.
+render_env() {
+  local name="$1" dir cfg site cdn_port_php wiki_link_php
+  dir="$(env_dir "$name")"
+  cfg="$dir/config"
+  load_env "$name"
+  # Pick up domain/port changes from dgg.conf, keep the create-time choices.
+  write_env_file "$name"
+  load_env "$name"
+  site="https://$DGG_HOST$DGG_PORT_SUFFIX"
+
+  mkdir -p "$cfg/nginx" "$cfg/chat" "$cfg/live-ws" "$cfg/wiki"
+
+  sed \
+    -e "s/@@PORT@@/$DGG_PORT/g" \
+    -e "s/@@PORT_SUFFIX@@/$DGG_PORT_SUFFIX/g" \
+    -e "s/@@HOST@@/$DGG_HOST/g" \
+    -e "s/@@CDN_HOST@@/$DGG_CDN_HOST/g" \
+    -e "s/@@TUNNEL_HOST@@/${NGROK_DOMAIN:-tunnel.invalid}/g" \
+    "$ROOT/docker/nginx-config/dgg.local.conf.template" > "$cfg/nginx/dgg.local.conf"
+
+  # $domain feeds the CSP host sources; the wildcard covers the site and CDN
+  # hosts on any port.
+  echo "set \$domain \"*.$DGG_DOMAIN\";" > "$cfg/nginx/domain.conf"
+
+  if [ -n "$DGG_PORT_SUFFIX" ]; then
+    cdn_port_php="\$config['cdn']['port'] = $DGG_PORT;"
+  else
+    cdn_port_php="unset(\$config['cdn']['port']);"
+  fi
+  if has_profile wiki; then
+    wiki_link_php="\$config['links']['/wiki'] = 'https://$DGG_WIKI_HOST$DGG_PORT_SUFFIX';"
+  else
+    wiki_link_php="// (no wiki in this environment)"
+  fi
+  cat > "$cfg/website.config.php" <<EOF
+<?php
+
+// Generated by dgg for the '$name' environment — don't edit. Settings shared
+// by every environment (keys, secrets, feature config) live in dockerstiny's
+// config/website.config.php; this file only lays this environment's URLs
+// over them.
+
+\$config = require '/etc/dgg/shared/website.config.php';
+
+\$config['origin'] = '$site';
+\$config['chatWebSocketUrl'] = 'wss://$DGG_HOST$DGG_PORT_SUFFIX/ws';
+\$config['cdn']['domain'] = '$DGG_CDN_HOST';
+\$config['cdn']['protocol'] = 'https://';
+$cdn_port_php
+\$config['embed']['twitchParents'] = ['$DGG_HOST'];
+$wiki_link_php
+
+return \$config;
+EOF
+
+  sed -E \
+    -e "s|^allowedoriginhost = .*|allowedoriginhost = $DGG_HOST$DGG_PORT_SUFFIX|" \
+    -e "s|^url = https?://[^/]+/api|url = $site/api|" \
+    "$SHARED_CONFIG_DIR/chat.settings.cfg" > "$cfg/chat/settings.cfg"
+
+  sed -E \
+    -e "s|^API_URL=.*|API_URL=$site/api|" \
+    "$SHARED_CONFIG_DIR/live-ws.env" > "$cfg/live-ws/.env"
+
+  sed \
+    -e "s|@@WIKI_URL@@|https://$DGG_WIKI_HOST$DGG_PORT_SUFFIX|g" \
+    -e "s|@@SITE_URL@@|$site|g" \
+    "$ROOT/docker/wiki-config/LocalSettings.php.template" > "$cfg/wiki/LocalSettings.php"
+
+  if [ -d "$WEBSITE_DIR" ]; then
+    cat > "$WEBSITE_DIR/config/config.local.php" <<'EOF'
+<?php
+
+// Generated by dgg. The real config is mounted into the containers: shared
+// settings at /etc/dgg/shared, this environment's URLs at /etc/dgg/env.
+return require '/etc/dgg/env/website.config.php';
+EOF
+    # Read by webpack at build time, so these are baked into static/.
+    sed -E \
+      -e "s|^WS_API_URL=.*|WS_API_URL=wss://$DGG_HOST$DGG_PORT_SUFFIX/dggApi|" \
+      -e "s|^CDN_ORIGIN=.*|CDN_ORIGIN=https://$DGG_CDN_HOST$DGG_PORT_SUFFIX|" \
+      "$SHARED_CONFIG_DIR/website.env" > "$WEBSITE_DIR/.env"
+  fi
+}
+
+# ── Certificates ─────────────────────────────────────────────────────────────
+
+ensure_certs() {
+  local cert="$CERT_DIR/wildcard.pem" key="$CERT_DIR/wildcard-key.pem" ca="$CA_DIR/rootCA.pem"
+  local domain_marker="$CERT_DIR/wildcard.domain"
+  if [ -f "$cert" ] && [ -f "$key" ] && [ -f "$ca" ] && [ "$(cat "$domain_marker" 2>/dev/null)" = "$DGG_DOMAIN" ]; then
+    skip "TLS cert for *.$DGG_DOMAIN already exists"
+    return
+  fi
+  info "Generating TLS cert for *.$DGG_DOMAIN with mkcert..."
+  mkcert -install
+  mkcert -cert-file "$cert" -key-file "$key" "*.$DGG_DOMAIN" "$DGG_DOMAIN" localhost 127.0.0.1
+  cp "$(mkcert -CAROOT)/rootCA.pem" "$ca"
+  echo "$DGG_DOMAIN" > "$domain_marker"
+  ok "TLS cert generated"
+}
+
+# ── Proxy ────────────────────────────────────────────────────────────────────
+
+proxy_dc() {
+  DGG_PORT="$DGG_PORT" DGG_PROXY_NETWORK="$PROXY_NETWORK" \
+    docker compose -f "$ROOT/proxy/docker-compose.yml" "$@"
+}
+
+proxy_running() {
+  [ -n "$(docker ps -q --filter "label=com.docker.compose.project=dgg-proxy")" ]
+}
+
+ensure_proxy() {
+  proxy_running && return 0
+  info "Starting the proxy on 127.0.0.1:$DGG_PORT..."
+  proxy_dc up -d
+}
+
+# ── Images ───────────────────────────────────────────────────────────────────
+
+image_exists() { docker image inspect "$1" >/dev/null 2>&1; }
+
+# A detached checkout of origin's default branch, used to build the images
+# that environments without their own worktree of a service run.
+ensure_base_worktree() {
+  local svc="$1" dir="$BASE_DIR/$1"
+  [ -d "$dir" ] && return 0
+  require_repo "$svc"
+  mkdir -p "$BASE_DIR"
+  git -C "$(repo_dir "$svc")" worktree prune
+  add_worktree "$svc" "$dir"
+}
+
+build_base_image() {
+  case "$1" in
+    website)
+      docker build -t dgg/website:dev -f "$ROOT/docker/Dockerfile-website" \
+        --build-context "website=$(repo_dir website)" "$ROOT" ;;
+    worker)
+      docker build -t dgg/worker:dev -f "$ROOT/docker/Dockerfile-worker" \
+        --build-context "website=$(repo_dir website)" "$ROOT" ;;
+    chat)
+      ensure_base_worktree chat
+      docker build -t dgg/chat:base -f "$ROOT/docker/Dockerfile-chat" \
+        --build-context "certs=$CA_DIR" "$BASE_DIR/chat" ;;
+    live-ws)
+      ensure_base_worktree live-ws
+      docker build -t dgg/live-ws:base -f "$ROOT/docker/Dockerfile-live-ws" \
+        --build-context "certs=$CA_DIR" "$BASE_DIR/live-ws" ;;
+    wikistiny)
+      docker build -t dgg/wikistiny:dev -f "$ROOT/docker/Dockerfile-wikistiny" "$ROOT" ;;
+  esac
+}
+
+base_image_tag() {
+  case "$1" in
+    website) echo dgg/website:dev ;;
+    worker) echo dgg/worker:dev ;;
+    chat) echo dgg/chat:base ;;
+    live-ws) echo dgg/live-ws:base ;;
+    wikistiny) echo dgg/wikistiny:dev ;;
+  esac
+}
+
+ensure_base_image() {
+  if image_exists "$(base_image_tag "$1")"; then return 0; fi
+  info "Building $(base_image_tag "$1") (one-time)..."
+  build_base_image "$1"
+}
+
+# The shared images this environment's enabled services run on.
+ensure_env_images() {
+  local name="$1"
+  load_env "$name"
+  ensure_base_image website
+  if has_profile worker && [ "$WORKER_REPLICAS" != "0" ]; then ensure_base_image worker; fi
+  if has_profile chat && [ "$CHAT_IMAGE" = "dgg/chat:base" ]; then ensure_base_image chat; fi
+  if has_profile live-ws && [ "$LIVE_WS_IMAGE" = "dgg/live-ws:base" ]; then ensure_base_image live-ws; fi
+  if has_profile wiki; then ensure_base_image wikistiny; fi
+  return 0
+}
+
+# Services in this environment built from its own worktrees.
+env_built_services() {
+  load_env "$1"
+  local out=()
+  if has_profile chat && [ "$CHAT_IMAGE" != "dgg/chat:base" ]; then out+=(chat); fi
+  if has_profile live-ws && [ "$LIVE_WS_IMAGE" != "dgg/live-ws:base" ]; then out+=(live-ws); fi
+  echo "${out[*]:-}"
+}
+
+# ── Database ─────────────────────────────────────────────────────────────────
+
+snapshot_path() { echo "$SNAPSHOT_DIR/$1.tar.gz"; }
+
+wait_for_mysql() {
+  local name="$1" retries=60
+  info "Waiting for MySQL..."
+  until dc "$name" exec -T mysql mariadb -udestiny -pAslanIsEvil -e "SELECT 1" destinygg >/dev/null 2>&1; do
+    retries=$((retries - 1))
+    [ "$retries" -gt 0 ] || die "Timed out waiting for MySQL (dgg logs $name mysql)"
+    sleep 2
+  done
+}
+
+run_migrations() {
+  info "Running database migrations..."
+  dc "$1" exec -T website vendor/bin/doctrine-migrations migrate --no-interaction -q
+  ok "Migrations complete"
+}
+
+# Archive a MySQL data volume. The server must be stopped for the files to be
+# consistent.
+snapshot_save_volume() {
+  local volume="$1" label="$2"
+  mkdir -p "$SNAPSHOT_DIR"
+  docker run --rm --entrypoint sh \
+    -v "$volume:/var/lib/mysql:ro" -v "$SNAPSHOT_DIR:/snap" "$MYSQL_IMAGE" \
+    -c "tar -czf /snap/$label.tar.gz.tmp -C /var/lib/mysql . && mv /snap/$label.tar.gz.tmp /snap/$label.tar.gz"
+  ok "Saved snapshot '$label' ($(du -h "$(snapshot_path "$label")" | cut -f1 | tr -d ' '))"
+}
+
+snapshot_save_env() {
+  local name="$1" label="$2" was_running=""
+  if [ -n "$(dc "$name" ps -q mysql 2>/dev/null)" ]; then
+    was_running=1
+    info "Stopping $name's MySQL for a consistent copy..."
+    dc "$name" stop mysql >/dev/null 2>&1
+  fi
+  snapshot_save_volume "dgg-${name}_mysql_data" "$label"
+  if [ -n "$was_running" ]; then
+    dc "$name" up -d >/dev/null 2>&1
+    # chat doesn't reconnect to the database on its own.
+    load_env "$name"
+    if has_profile chat; then dc "$name" restart chat >/dev/null 2>&1; fi
+  fi
+}
+
+# Unpack a snapshot into a not-yet-started environment. Going through the
+# mysql service lets Compose create (and own) the volume.
+snapshot_restore() {
+  local name="$1" label="$2"
+  info "Restoring database snapshot '$label'..."
+  dc "$name" run --rm --no-deps --entrypoint sh -v "$SNAPSHOT_DIR:/snap:ro" mysql \
+    -c "tar -xzf /snap/$label.tar.gz -C /var/lib/mysql" >/dev/null
+  ok "Database restored"
+}
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+cmd_init() {
+  local opt_domain="" opt_port="" opt_ngrok="" opt_build=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --domain) opt_domain="$2"; shift 2 ;;
+      --port) opt_port="$2"; shift 2 ;;
+      --ngrok-domain) opt_ngrok="$2"; shift 2 ;;
+      --no-build) opt_build=""; shift ;;
+      *) die "Unknown option for init: $1" ;;
+    esac
+  done
+
+  [[ "$ROOT" != *" "* ]] || die "dockerstiny's path can't contain spaces: $ROOT"
+
+  local missing=() cmd
+  for cmd in docker git npm composer mkcert; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  if command -v docker >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+    missing+=("docker compose")
+  fi
+  [ ${#missing[@]} -eq 0 ] || die "Missing required tools: ${missing[*]} (see README.md)"
+  ok "All prerequisites found"
+
+  load_conf
+  # Carry the tunnel domain over from the single-environment setup.
+  if [ ! -f "$CONF_FILE" ] && [ -z "$NGROK_DOMAIN" ] && [ -f "$ROOT/.env" ]; then
+    NGROK_DOMAIN="$(sed -n 's/^NGROK_DOMAIN=//p' "$ROOT/.env" | tail -1)"
+  fi
+  [ -n "$opt_domain" ] && DGG_DOMAIN="$opt_domain"
+  [ -n "$opt_port" ] && DGG_PORT="$opt_port"
+  [ -n "$opt_ngrok" ] && NGROK_DOMAIN="$opt_ngrok"
+  write_conf
+  load_conf
+  ok "Settings saved to dgg.conf (https://<name>.$DGG_DOMAIN$PORT_SUFFIX)"
+
+  local repo
+  mkdir -p "$REPOS_DIR"
+  for repo in website chat chat-gui live-ws Wikistiny; do
+    if [ -d "$(repo_dir "$repo")/.git" ]; then
+      skip "Repo '$repo' already cloned"
+    else
+      info "Cloning $repo..."
+      git clone "$(repo_url "$repo")" "$(repo_dir "$repo")"
+      ok "Cloned $repo"
+    fi
+  done
+
+  ensure_certs
+
+  mkdir -p "$SHARED_CONFIG_DIR" "$ENVS_DIR" "$STATE_DIR"
+  seed_shared website.config.php "$(repo_dir website)/config/config.local.php" "$ROOT/docker/website-config/config.local.php"
+  seed_shared website.env        "$(repo_dir website)/.env"                    "$ROOT/docker/website-config/.env"
+  seed_shared chat.settings.cfg  "$(repo_dir chat)/settings.cfg"               "$ROOT/docker/chat-config/settings.cfg"
+  seed_shared live-ws.env        "$(repo_dir live-ws)/.env"                    "$ROOT/docker/live-ws-config/.env"
+
+  # New worktrees clone their dependencies from the canonical checkouts, so
+  # make sure those have them.
+  if [ ! -d "$(repo_dir website)/vendor" ]; then
+    info "Installing website PHP dependencies..."
+    (cd "$(repo_dir website)" && composer install)
+  fi
+  if [ ! -d "$(repo_dir chat-gui)/node_modules" ]; then
+    info "Installing chat-gui dependencies..."
+    (cd "$(repo_dir chat-gui)" && npm ci)
+  fi
+  if [ ! -d "$(repo_dir website)/node_modules" ]; then
+    info "Installing website dependencies..."
+    (cd "$(repo_dir website)" && npm ci)
+    link_chat_gui "$(repo_dir website)" "$(repo_dir chat-gui)"
+  fi
+
+  ensure_proxy
+
+  if [ -n "$opt_build" ]; then
+    local img
+    for img in website worker chat live-ws; do ensure_base_image "$img"; done
+  fi
+
+  echo
+  ok "Ready. Create an environment with: dgg create <name> --with website,chat-gui"
+}
+
+cmd_create() {
+  require_init
+  [ $# -gt 0 ] || die "Usage: dgg create <name> [--with svc[:branch],…] [options]"
+  local name="$1"; shift
+  validate_name "$name"
+  [ ! -e "$(env_dir "$name")" ] || die "envs/$name already exists"
+
+  local with="" without="" wiki="" workers="2" do_build=1 do_up=1 snapshot="default" use_snapshot=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --with) with="$2"; shift 2 ;;
+      --without) without="$2"; shift 2 ;;
+      --minimal) without="live-ws,cron,worker"; shift ;;
+      --wiki) wiki=1; shift ;;
+      --workers) workers="$2"; shift 2 ;;
+      --snapshot) snapshot="$2"; shift 2 ;;
+      --no-snapshot) use_snapshot=""; shift ;;
+      --no-build) do_build=""; shift ;;
+      --no-up) do_up=""; shift ;;
+      *) die "Unknown option for create: $1" ;;
+    esac
+  done
+
+  # --with website:my-branch,chat → service → branch (default: the env name)
+  local -A branches=()
+  local item svc
+  if [ -n "$with" ]; then
+    IFS=',' read -ra _items <<< "$with"
+    for item in "${_items[@]}"; do
+      svc="${item%%:*}"
+      [[ " ${WORKTREE_SERVICES[*]} " == *" $svc "* ]] ||
+        die "Can't create a worktree for '$svc' (choose from: ${WORKTREE_SERVICES[*]})"
+      if [[ "$item" == *:* ]]; then branches[$svc]="${item#*:}"; else branches[$svc]="$name"; fi
+    done
+  fi
+
+  local profiles=",chat,live-ws,cron,worker,"
+  if [ -n "$without" ]; then
+    IFS=',' read -ra _items <<< "$without"
+    for item in "${_items[@]}"; do
+      [[ " ${OPTIONAL_SERVICES[*]} " == *" $item "* ]] ||
+        die "Can't leave out '$item' (optional services: ${OPTIONAL_SERVICES[*]})"
+      [ -z "${branches[$item]:-}" ] || die "'$item' is both --with and --without"
+      profiles="${profiles/,$item,/,}"
+    done
+  fi
+  [ -n "$wiki" ] && profiles="${profiles}wiki,"
+  profiles="${profiles#,}"; profiles="${profiles%,}"
+  [[ "$workers" =~ ^[0-9]+$ ]] || die "--workers takes a number"
+
+  if [ -n "$use_snapshot" ] && [ "$snapshot" != "default" ] && [ ! -f "$(snapshot_path "$snapshot")" ]; then
+    die "No snapshot named '$snapshot'. See: dgg snapshot ls"
+  fi
+
+  local dir
+  dir="$(env_dir "$name")"
+  info "Creating environment '$name'..."
+
+  for svc in website "${!branches[@]}"; do require_repo "$svc"; done
+  for svc in website "${!branches[@]}"; do fetch_repo "$svc"; done
+  for svc in "${WORKTREE_SERVICES[@]}"; do git -C "$(repo_dir "$svc")" worktree prune 2>/dev/null || true; done
+
+  mkdir -p "$dir"
+  # From here on a failure leaves a half-built environment; say how to clear it.
+  trap 'err "create failed — clean up with: dgg rm '"$name"' --force"' ERR
+
+  # The website always gets its own checkout: its static build bakes in this
+  # environment's URLs and its node_modules links to a specific chat-gui.
+  add_worktree website "$dir/website" "${branches[website]:-}"
+  for svc in chat chat-gui live-ws; do
+    if [ -n "${branches[$svc]:-}" ]; then add_worktree "$svc" "$dir/$svc" "${branches[$svc]}"; fi
+  done
+
+  DGG_PROFILES="$profiles"
+  WORKER_REPLICAS="$workers"
+  if [ -n "${branches[chat]:-}" ]; then
+    CHAT_IMAGE="dgg-$name/chat:dev"; CHAT_DIR="$dir/chat"
+  else
+    CHAT_IMAGE="dgg/chat:base"; CHAT_DIR="$BASE_DIR/chat"
+  fi
+  if [ -n "${branches[live-ws]:-}" ]; then
+    LIVE_WS_IMAGE="dgg-$name/live-ws:dev"; LIVE_WS_DIR="$dir/live-ws"
+  else
+    LIVE_WS_IMAGE="dgg/live-ws:base"; LIVE_WS_DIR="$BASE_DIR/live-ws"
+  fi
+  write_env_file "$name"
+  render_env "$name"
+  ok "Config rendered to envs/$name/config"
+
+  local chat_gui_dir
+  chat_gui_dir="$(repo_dir chat-gui)"
+  if [ -n "${branches[chat-gui]:-}" ]; then
+    chat_gui_dir="$dir/chat-gui"
+    install_deps "$chat_gui_dir" "$(repo_dir chat-gui)" package-lock.json node_modules npm ci
+  fi
+  install_deps "$dir/website" "$(repo_dir website)" composer.lock vendor composer install
+  install_deps "$dir/website" "$(repo_dir website)" package-lock.json node_modules npm ci
+  link_chat_gui "$dir/website" "$chat_gui_dir"
+  ok "website → chat-gui at ${chat_gui_dir#"$ROOT"/}"
+
+  if [ -n "$do_build" ]; then
+    info "Building website static assets..."
+    (cd "$dir/website" && npm run build:dev >/dev/null) || die "Asset build failed — run it yourself: cd $dir/website && npm run build:dev"
+    ok "Website assets built"
+  else
+    skip "Asset build (--no-build): run 'npm run build:dev' in envs/$name/website before browsing"
+  fi
+
+  ensure_env_images "$name"
+  local built
+  built="$(env_built_services "$name")"
+  if [ -n "$built" ]; then
+    info "Building images from this environment's worktrees: $built"
+    # shellcheck disable=SC2086
+    dc "$name" build $built
+  fi
+
+  trap - ERR
+
+  if [ -z "$do_up" ]; then
+    ok "Created '$name' (not started). Start it with: dgg up $name"
+    return
+  fi
+
+  local restored=""
+  if [ -n "$use_snapshot" ] && [ -f "$(snapshot_path "$snapshot")" ]; then
+    snapshot_restore "$name" "$snapshot"
+    restored=1
+  fi
+
+  ensure_proxy
+  dc "$name" up -d
+  wait_for_mysql "$name"
+  run_migrations "$name"
+
+  # The first environment ever created seeds the snapshot the rest start from.
+  if [ -z "$restored" ] && [ -n "$use_snapshot" ] && [ "$snapshot" = "default" ]; then
+    info "No database snapshot yet — saving this freshly migrated one as 'default'"
+    snapshot_save_env "$name" default
+  fi
+
+  echo
+  ok "Environment '$name' is up"
+  print_urls "$name"
+}
+
+print_urls() {
+  load_env "$1"
+  local site="https://$DGG_HOST$DGG_PORT_SUFFIX"
+  info "Site:  $site"
+  info "Admin: $site/impersonate?username=admin"
+  if has_profile wiki; then info "Wiki:  https://$DGG_WIKI_HOST$DGG_PORT_SUFFIX"; fi
+  info "Code:  envs/$1/"
+}
+
+cmd_up() {
+  require_init
+  resolve_env "$@"
+  render_env "$ENV_NAME"
+  ensure_env_images "$ENV_NAME"
+  ensure_proxy
+  dc "$ENV_NAME" up -d "${ARGS[@]}"
+  print_urls "$ENV_NAME"
+}
+
+cmd_down() {
+  require_init
+  resolve_env "$@"
+  dc "$ENV_NAME" down --remove-orphans
+  ok "Stopped '$ENV_NAME' (volumes and worktrees kept)"
+}
+
+cmd_restart() {
+  require_init
+  resolve_env "$@"
+  dc "$ENV_NAME" restart "${ARGS[@]}"
+}
+
+cmd_rm() {
+  require_init
+  local force="" args=() a
+  for a in "$@"; do
+    if [ "$a" = "--force" ] || [ "$a" = "-f" ]; then force=1; else args+=("$a"); fi
+  done
+  [ ${#args[@]} -gt 0 ] || die "Usage: dgg rm <name> [--force]"
+  local name="${args[0]}" dir svc
+  validate_name "$name"
+  dir="$(env_dir "$name")"
+  [ -d "$dir" ] || die "No environment named '$name'"
+
+  if [ -z "$force" ]; then
+    for svc in "${WORKTREE_SERVICES[@]}"; do
+      if [ -d "$dir/$svc" ] && worktree_dirty "$dir/$svc"; then
+        die "envs/$name/$svc has uncommitted changes. Commit or stash them, or pass --force to discard."
+      fi
+    done
+  fi
+
+  if [ -f "$dir/env" ]; then
+    info "Removing containers, volumes and images..."
+    dc "$name" down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+    docker image rm "dgg-$name/chat:dev" "dgg-$name/live-ws:dev" >/dev/null 2>&1 || true
+  fi
+  for svc in "${WORKTREE_SERVICES[@]}"; do
+    if [ -d "$dir/$svc" ]; then
+      # Dependencies and build output are untracked, so removal always needs
+      # --force; real changes were checked for above.
+      remove_worktree "$svc" "$dir/$svc" --force || warn "Couldn't remove the $svc worktree cleanly"
+    fi
+  done
+  if [ -f "$TUNNEL_FILE" ] && grep -q "dgg-$name@docker" "$TUNNEL_FILE"; then rm -f "$TUNNEL_FILE"; fi
+  rm -rf "$dir"
+  ok "Removed '$name' (its branches are untouched)"
+}
+
+cmd_ls() {
+  require_init
+  local name total running status trees svc branch
+  printf '%-16s %-10s %-42s %s\n' NAME STATUS URL WORKTREES
+  while read -r name; do
+    [ -n "$name" ] || continue
+    load_env "$name"
+    running="$(running_count "$name")"
+    if [ "$running" = "0" ]; then status="stopped"; else status="up ($running)"; fi
+    trees=""
+    for svc in "${WORKTREE_SERVICES[@]}"; do
+      [ -d "$(env_dir "$name")/$svc" ] || continue
+      branch="$(git -C "$(env_dir "$name")/$svc" branch --show-current 2>/dev/null || true)"
+      # A detached website is just the default-branch checkout every env has.
+      [ -n "$branch" ] || continue
+      trees="$trees $svc:$branch"
+    done
+    printf '%-16s %-10s %-42s %s\n' "$name" "$status" "https://$DGG_HOST$DGG_PORT_SUFFIX" "${trees# }"
+  done < <(list_envs)
+  if ! proxy_running; then warn "The proxy isn't running (dgg proxy up)"; fi
+}
+
+cmd_url() {
+  require_init
+  resolve_env "$@"
+  load_env "$ENV_NAME"
+  echo "https://$DGG_HOST$DGG_PORT_SUFFIX"
+}
+
+cmd_path() {
+  require_init
+  resolve_env "$@"
+  local p
+  p="$(env_dir "$ENV_NAME")${ARGS[0]:+/${ARGS[0]}}"
+  [ -e "$p" ] || die "No such path: $p"
+  echo "$p"
+}
+
+cmd_logs() {
+  require_init
+  resolve_env "$@"
+  dc "$ENV_NAME" logs "${ARGS[@]}"
+}
+
+cmd_ps() {
+  require_init
+  resolve_env "$@"
+  dc "$ENV_NAME" ps "${ARGS[@]}"
+}
+
+cmd_exec() {
+  require_init
+  resolve_env "$@"
+  [ ${#ARGS[@]} -gt 0 ] || die "Usage: dgg exec [name] <service> <command…>"
+  dc "$ENV_NAME" exec "${ARGS[@]}"
+}
+
+cmd_compose() {
+  require_init
+  resolve_env "$@"
+  if [ "${ARGS[0]:-}" = "--" ]; then ARGS=("${ARGS[@]:1}"); fi
+  dc "$ENV_NAME" "${ARGS[@]}"
+}
+
+cmd_build() {
+  require_init
+  resolve_env "$@"
+  local svcs=("${ARGS[@]}")
+  if [ ${#svcs[@]} -eq 0 ]; then
+    read -ra svcs <<< "$(env_built_services "$ENV_NAME")"
+  fi
+  [ ${#svcs[@]} -gt 0 ] || die "'$ENV_NAME' has no services built from its own worktrees (chat, live-ws)"
+  dc "$ENV_NAME" build "${svcs[@]}"
+  if [ "$(running_count "$ENV_NAME")" != "0" ]; then dc "$ENV_NAME" up -d "${svcs[@]}"; fi
+}
+
+cmd_migrate() {
+  require_init
+  resolve_env "$@"
+  run_migrations "$ENV_NAME"
+}
+
+cmd_test() {
+  require_init
+  resolve_env "$@"
+  ensure_base_image website
+  local rc=0
+  if [ ${#ARGS[@]} -gt 0 ]; then
+    dc "$ENV_NAME" --profile test run --rm website-test vendor/bin/phpunit "${ARGS[@]}" || rc=$?
+  else
+    dc "$ENV_NAME" --profile test run --rm website-test || rc=$?
+  fi
+  dc "$ENV_NAME" --profile test stop mysql-test >/dev/null 2>&1 || true
+  return $rc
+}
+
+cmd_render() {
+  require_init
+  local name
+  if [ "${1:-}" = "--all" ]; then
+    while read -r name; do
+      [ -n "$name" ] || continue
+      render_env "$name"; ok "Rendered $name"
+    done < <(list_envs)
+    info "Restart running environments to pick up the changes (dgg up <name>)"
+    return
+  fi
+  resolve_env "$@"
+  render_env "$ENV_NAME"
+  ok "Rendered $ENV_NAME"
+}
+
+cmd_proxy() {
+  require_init
+  case "${1:-status}" in
+    up) proxy_dc up -d ;;
+    down) proxy_dc down ;;
+    restart) proxy_dc up -d --force-recreate ;;
+    logs) shift; proxy_dc logs "$@" ;;
+    status)
+      if proxy_running; then ok "Proxy is running on 127.0.0.1:$DGG_PORT"; else warn "Proxy is not running"; fi ;;
+    *) die "Usage: dgg proxy up|down|restart|logs|status" ;;
+  esac
+}
+
+cmd_tunnel() {
+  require_init
+  case "${1:-}" in
+    "")
+      if [ -f "$TUNNEL_FILE" ]; then
+        info "Tunnel routes to: $(sed -n 's/.*service: dgg-\(.*\)@docker.*/\1/p' "$TUNNEL_FILE")"
+      else
+        info "No tunnel route. Set one with: dgg tunnel <name>"
+      fi
+      return ;;
+    off)
+      rm -f "$TUNNEL_FILE"
+      ok "Tunnel route removed"
+      return ;;
+  esac
+
+  local run=""
+  resolve_env "$@"
+  if [ "${ARGS[0]:-}" = "--run" ]; then run=1; fi
+  [ -n "$NGROK_DOMAIN" ] || die "Set NGROK_DOMAIN in dgg.conf first, then: dgg render --all"
+
+  # The ngrok agent connects to https://localhost, so it arrives with
+  # "localhost" as its SNI name rather than any environment's hostname. Send
+  # that (and the tunnel domain itself) to the chosen environment, whose
+  # nginx serves only the webhook path for the tunnel's Host header.
+  cat > "$TUNNEL_FILE" <<EOF
+# Generated by \`dgg tunnel $ENV_NAME\`.
+tcp:
+    routers:
+        dgg-tunnel:
+            entryPoints:
+                - websecure
+            rule: "HostSNI(\`localhost\`) || HostSNI(\`$NGROK_DOMAIN\`)"
+            service: dgg-$ENV_NAME@docker
+            tls:
+                passthrough: true
+EOF
+  ok "Tunnel traffic now routes to '$ENV_NAME'"
+  local ngrok_cmd=(ngrok http "https://localhost:$DGG_PORT" "--url=$NGROK_DOMAIN")
+  if [ -n "$run" ]; then
+    exec "${ngrok_cmd[@]}"
+  fi
+  info "Start the tunnel with: ${ngrok_cmd[*]}"
+}
+
+cmd_snapshot() {
+  require_init
+  local sub="${1:-ls}"
+  [ $# -gt 0 ] && shift
+  case "$sub" in
+    ls)
+      if ! ls "$SNAPSHOT_DIR"/*.tar.gz >/dev/null 2>&1; then
+        info "No snapshots yet. The first \`dgg create\` saves one, or: dgg snapshot save <env>"
+        return
+      fi
+      local f
+      for f in "$SNAPSHOT_DIR"/*.tar.gz; do
+        printf '%-20s %6s  %s\n' "$(basename "$f" .tar.gz)" "$(du -h "$f" | cut -f1 | tr -d ' ')" "$(date -r "$f" '+%Y-%m-%d %H:%M')"
+      done ;;
+    save)
+      local label="default" volume="" name="" force=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --as) label="$2"; shift 2 ;;
+          --volume) volume="$2"; shift 2 ;;
+          --force) force=1; shift ;;
+          *) name="$1"; shift ;;
+        esac
+      done
+      [[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid snapshot name '$label'"
+      if [ -n "$volume" ]; then
+        docker volume inspect "$volume" >/dev/null 2>&1 || die "No Docker volume named '$volume'"
+        if [ -z "$force" ] && [ -n "$(docker ps -q --filter "volume=$volume")" ]; then
+          die "A running container is using '$volume'; copying live database files is unsafe. Stop it first, or pass --force."
+        fi
+        snapshot_save_volume "$volume" "$label"
+      else
+        resolve_env ${name:+"$name"}
+        snapshot_save_env "$ENV_NAME" "$label"
+      fi ;;
+    rm)
+      [ $# -gt 0 ] || die "Usage: dgg snapshot rm <snapshot>"
+      [ -f "$(snapshot_path "$1")" ] || die "No snapshot named '$1'"
+      rm -f "$(snapshot_path "$1")"
+      ok "Removed snapshot '$1'" ;;
+    *) die "Usage: dgg snapshot ls | save [env] [--as name] [--volume docker-volume] | rm <name>" ;;
+  esac
+}
+
+cmd_update() {
+  require_init
+  local svc
+  for svc in chat live-ws; do
+    require_repo "$svc"
+    fetch_repo "$svc"
+    ensure_base_worktree "$svc"
+    git -C "$BASE_DIR/$svc" checkout --quiet --detach "$(default_ref "$svc")"
+    ok "$svc base → $(git -C "$BASE_DIR/$svc" log -1 --format='%h %s')"
+  done
+  local img
+  for img in website worker chat live-ws; do
+    info "Building $(base_image_tag "$img")..."
+    build_base_image "$img"
+  done
+  if image_exists dgg/wikistiny:dev; then build_base_image wikistiny; fi
+  ok "Base images rebuilt. Recreate running environments to use them: dgg up <name>"
+}
+
+cmd_help() {
+  cat <<'EOF'
+dgg — Destiny.gg dev environments on demand
+
+Usage: dgg <command> [args]
+
+Setup
+  init [--domain D] [--port P] [--ngrok-domain N] [--no-build]
+                          One-time setup: repos, TLS cert, shared config,
+                          proxy, base images. Safe to re-run.
+  update                  Move base images to origin's latest default branches
+
+Environments
+  create <name> [options] Create and start an environment
+      --with svc[:branch],…   Worktrees for the services you're changing
+                              (website, chat, chat-gui, live-ws). The branch
+                              defaults to <name>; created from origin's
+                              default branch if it doesn't exist.
+      --without svc,…         Don't run these (chat, live-ws, cron, worker)
+      --minimal               Same as --without live-ws,cron,worker
+      --workers N             Queue worker replicas (default 2)
+      --wiki                  Also run the wiki
+      --snapshot NAME         Start from this DB snapshot (default: default)
+      --no-snapshot           Start from an empty, freshly migrated DB
+      --no-build              Skip the website asset build
+      --no-up                 Set everything up but don't start containers
+  ls                      List environments
+  up [name] [svc…]        Start (re-renders config first)
+  down [name]             Stop; keeps the database and worktrees
+  rm <name> [--force]     Delete containers, volumes, worktrees (not branches)
+
+Working in one ([name] can be omitted inside envs/<name>/)
+  url [name]              Print the site URL
+  path [name] [svc]       Print a directory: cd "$(dgg path foo website)"
+  logs [name] [args…]     docker compose logs
+  ps [name]               docker compose ps
+  exec [name] svc cmd…    Run a command in a service container
+  restart [name] [svc…]   Restart services
+  build [name] [svc…]     Rebuild images built from worktrees (chat, live-ws)
+  migrate [name]          Run database migrations
+  test [name] [args…]     Run the website's PHPUnit suite
+  render [name | --all]   Regenerate config from templates + shared config
+  compose [name] -- args  Raw docker compose for anything else
+
+Shared
+  snapshot ls | save [env] [--as NAME] [--volume VOL] | rm NAME
+                          Database snapshots new environments start from
+  tunnel [name [--run] | off]
+                          Route the ngrok tunnel (TTS webhooks) to one env
+  proxy up|down|restart|logs|status
+EOF
+}
+
+main() {
+  local cmd="${1:-help}"
+  [ $# -gt 0 ] && shift
+  load_conf
+  case "$cmd" in
+    init) cmd_init "$@" ;;
+    create|new) cmd_create "$@" ;;
+    up|start) cmd_up "$@" ;;
+    down|stop) cmd_down "$@" ;;
+    restart) cmd_restart "$@" ;;
+    rm|remove|destroy) cmd_rm "$@" ;;
+    ls|list) cmd_ls "$@" ;;
+    url) cmd_url "$@" ;;
+    path) cmd_path "$@" ;;
+    logs) cmd_logs "$@" ;;
+    ps) cmd_ps "$@" ;;
+    exec) cmd_exec "$@" ;;
+    compose) cmd_compose "$@" ;;
+    build|rebuild) cmd_build "$@" ;;
+    migrate) cmd_migrate "$@" ;;
+    test) cmd_test "$@" ;;
+    render) cmd_render "$@" ;;
+    proxy) cmd_proxy "$@" ;;
+    tunnel) cmd_tunnel "$@" ;;
+    snapshot) cmd_snapshot "$@" ;;
+    update) cmd_update "$@" ;;
+    help|-h|--help) cmd_help ;;
+    *) err "Unknown command: $cmd"; echo; cmd_help; exit 1 ;;
+  esac
+}
+
+main "$@"

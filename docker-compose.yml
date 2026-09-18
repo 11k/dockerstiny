@@ -93,7 +93,6 @@ services:
                 certs: ./docker/ca-certs
         volumes:
             - ${DGG_ENV_DIR}/config/chat/settings.cfg:/app/settings.cfg
-            - ${DGG_ENV_DIR}/state/chat/state.dc:/app/state.dc
         depends_on:
             - redis
             - mysql
