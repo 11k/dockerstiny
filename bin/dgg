@@ -252,18 +252,21 @@ clone_dir() {
 
 same_file() { [ -f "$1" ] && [ -f "$2" ] && cmp -s "$1" "$2"; }
 
-# install_deps <dir> <canonical dir> <lockfile> <deps dir> <install command…>
+# install_deps <dir> <canonical dir> <lockfile> <deps dir> <marker> <install command…>
 # Reuse the canonical checkout's installed dependencies when the lockfiles
-# match; otherwise install from scratch.
+# match; otherwise install from scratch. The marker is a file that only exists
+# once dependencies are really installed — vendor/ itself is in a fresh
+# checkout, holding a tracked .gitignore.
 install_deps() {
-  local dir="$1" canon="$2" lock="$3" deps="$4"; shift 4
-  if [ -d "$dir/$deps" ]; then
-    skip "$(basename "$dir"): $deps already present"
-  elif [ -d "$canon/$deps" ] && same_file "$dir/$lock" "$canon/$lock"; then
-    info "$(basename "$dir"): cloning $deps from $canon"
+  local dir="$1" canon="$2" lock="$3" deps="$4" marker="$5"; shift 5
+  if [ -e "$dir/$deps/$marker" ]; then
+    skip "$(basename "$dir"): $deps already installed"
+  elif [ -e "$canon/$deps/$marker" ] && same_file "$dir/$lock" "$canon/$lock"; then
+    info "$(basename "$dir"): cloning $deps from ${canon#"$ROOT"/}"
+    rm -rf "${dir:?}/$deps"
     clone_dir "$canon/$deps" "$dir/$deps"
   else
-    info "$(basename "$dir"): running $*"
+    info "$(basename "$dir"): $lock differs from ${canon#"$ROOT"/} — running $*"
     (cd "$dir" && "$@")
   fi
 }
@@ -547,17 +550,17 @@ snapshot_save_volume() {
 
 snapshot_save_env() {
   local name="$1" label="$2" was_running=""
-  if [ -n "$(dc "$name" ps -q mysql 2>/dev/null)" ]; then
+  if [ "$(running_count "$name")" != "0" ]; then
     was_running=1
-    info "Stopping $name's MySQL for a consistent copy..."
-    dc "$name" stop mysql >/dev/null 2>&1
+    # Everything stops, not just MySQL: chat and cron don't survive losing
+    # their database connection.
+    info "Stopping $name for a consistent copy..."
+    dc "$name" stop >/dev/null 2>&1
   fi
   snapshot_save_volume "dgg-${name}_mysql_data" "$label"
   if [ -n "$was_running" ]; then
+    info "Starting $name again..."
     dc "$name" up -d >/dev/null 2>&1
-    # chat doesn't reconnect to the database on its own.
-    load_env "$name"
-    if has_profile chat; then dc "$name" restart chat >/dev/null 2>&1; fi
   fi
 }
 
@@ -631,7 +634,7 @@ cmd_init() {
 
   # New worktrees clone their dependencies from the canonical checkouts, so
   # make sure those have them.
-  if [ ! -d "$(repo_dir website)/vendor" ]; then
+  if [ ! -e "$(repo_dir website)/vendor/autoload.php" ]; then
     info "Installing website PHP dependencies..."
     (cd "$(repo_dir website)" && composer install)
   fi
@@ -749,10 +752,10 @@ cmd_create() {
   chat_gui_dir="$(repo_dir chat-gui)"
   if [ -n "${branches[chat-gui]:-}" ]; then
     chat_gui_dir="$dir/chat-gui"
-    install_deps "$chat_gui_dir" "$(repo_dir chat-gui)" package-lock.json node_modules npm ci
+    install_deps "$chat_gui_dir" "$(repo_dir chat-gui)" package-lock.json node_modules .package-lock.json npm ci
   fi
-  install_deps "$dir/website" "$(repo_dir website)" composer.lock vendor composer install
-  install_deps "$dir/website" "$(repo_dir website)" package-lock.json node_modules npm ci
+  install_deps "$dir/website" "$(repo_dir website)" composer.lock vendor autoload.php composer install
+  install_deps "$dir/website" "$(repo_dir website)" package-lock.json node_modules .package-lock.json npm ci
   link_chat_gui "$dir/website" "$chat_gui_dir"
   ok "website → chat-gui at ${chat_gui_dir#"$ROOT"/}"
 
@@ -787,7 +790,10 @@ cmd_create() {
   fi
 
   ensure_proxy
-  dc "$name" up -d
+  # Migrate before anything else starts: chat caches tables at boot and won't
+  # notice ones that appear later.
+  info "Starting the database..."
+  dc "$name" up -d website >/dev/null 2>&1
   wait_for_mysql "$name"
   run_migrations "$name"
 
@@ -796,6 +802,9 @@ cmd_create() {
     info "No database snapshot yet — saving this freshly migrated one as 'default'"
     snapshot_save_env "$name" default
   fi
+
+  info "Starting services..."
+  dc "$name" up -d
 
   echo
   ok "Environment '$name' is up"

@@ -54,15 +54,19 @@ services:
             additional_contexts:
                 website: ${DGG_BASE_WEBSITE_DIR}
         depends_on:
-            - redis
-            - mysql
+            redis:
+                condition: service_started
+            mysql:
+                condition: service_healthy
         volumes: *website-volumes
     cron:
         image: dgg/website:dev
         command: ["php", "-f", "./cron/index.php"]
         depends_on:
-            - redis
-            - mysql
+            redis:
+                condition: service_started
+            mysql:
+                condition: service_healthy
         volumes: *website-volumes
         profiles:
             - cron
@@ -75,8 +79,10 @@ services:
                 website: ${DGG_BASE_WEBSITE_DIR}
         restart: unless-stopped
         depends_on:
-            - redis
-            - mysql
+            redis:
+                condition: service_started
+            mysql:
+                condition: service_healthy
         volumes: *website-volumes
         deploy:
             replicas: ${WORKER_REPLICAS:-2}
@@ -94,8 +100,10 @@ services:
         volumes:
             - ${DGG_ENV_DIR}/config/chat/settings.cfg:/app/settings.cfg
         depends_on:
-            - redis
-            - mysql
+            redis:
+                condition: service_started
+            mysql:
+                condition: service_healthy
         profiles:
             - chat
     redis:
@@ -112,6 +120,13 @@ services:
             MYSQL_DATABASE: destinygg
             MYSQL_USER: destiny
             MYSQL_PASSWORD: AslanIsEvil
+        # cron and chat give up rather than retry if the database isn't
+        # accepting connections yet, so dependents wait for this.
+        healthcheck:
+            test: ["CMD", "mariadb", "-udestiny", "-pAslanIsEvil", "-e", "SELECT 1", "destinygg"]
+            interval: 2s
+            timeout: 5s
+            retries: 60
     live-ws:
         image: ${LIVE_WS_IMAGE}
         build:
