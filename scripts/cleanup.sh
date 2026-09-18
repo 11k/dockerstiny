@@ -19,9 +19,11 @@ for arg in "$@"; do
     -h|--help)
       echo "Usage: $0 [--all]"
       echo ""
-      echo "Stops containers, removes images, volumes, and generated configs."
+      echo "Removes every environment (containers, volumes, worktrees — discarding"
+      echo "uncommitted changes in them), the proxy, base images, database"
+      echo "snapshots, TLS certs and dgg.conf. Branches and config/ are kept."
       echo ""
-      echo "  --all    Also remove cloned repositories (website, chat, chat-gui, live-ws, Wikistiny)"
+      echo "  --all    Also remove config/ and the cloned repositories"
       exit 0
       ;;
     *)
@@ -31,53 +33,54 @@ for arg in "$@"; do
   esac
 done
 
-# ── 1. Stop containers and remove images + volumes ──────────────────────────
+# ── 1. Remove every environment ─────────────────────────────────────────────
 
-info "Stopping containers and removing images/volumes..."
-docker compose --profile dev --profile test down --rmi local --volumes --remove-orphans
-ok "Containers, images, and volumes removed"
+if [ -f dgg.conf ] && [ -d envs ]; then
+  for env_file in envs/*/env; do
+    [ -f "$env_file" ] || continue
+    name="$(basename "$(dirname "$env_file")")"
+    info "Removing environment '$name'..."
+    bin/dgg rm "$name" --force
+  done
+fi
+rm -rf envs
 
-# ── 2. Remove generated config files ────────────────────────────────────────
+# ── 2. Remove the proxy, base worktrees, images and snapshots ───────────────
 
-info "Removing generated config files..."
+if [ -f dgg.conf ]; then
+  info "Stopping the proxy..."
+  bin/dgg proxy down || warn "Couldn't stop the proxy"
+fi
+rm -f proxy/dynamic/tunnel.yml
 
-generated_files=(
-  docker/nginx-config/dgg.local.conf
-  docker/wiki-config/LocalSettings.php
-  website/config/config.local.php
-  website/.env
-  chat/settings.cfg
-  live-ws/.env
-)
+for svc in chat live-ws; do
+  if [ -d ".dgg/base/$svc" ] && [ -d "$svc/.git" ]; then
+    git -C "$svc" worktree remove --force "$PWD/.dgg/base/$svc" || warn "Couldn't remove the $svc base worktree"
+  fi
+done
+rm -rf .dgg
 
-for f in "${generated_files[@]}"; do
+info "Removing base images..."
+for image in dgg/website:dev dgg/worker:dev dgg/chat:base dgg/live-ws:base dgg/wikistiny:dev; do
+  docker image rm "$image" >/dev/null 2>&1 && ok "Removed $image" || true
+done
+
+# ── 3. Remove TLS certificates and settings ─────────────────────────────────
+
+info "Removing TLS certificates and settings..."
+for f in docker/nginx-certs/wildcard.pem docker/nginx-certs/wildcard-key.pem \
+         docker/nginx-certs/wildcard.domain docker/ca-certs/rootCA.pem dgg.conf; do
   if [ -f "$f" ]; then
     rm "$f"
     ok "Removed $f"
   fi
 done
 
-# ── 3. Remove TLS certificates ──────────────────────────────────────────────
-
-info "Removing TLS certificates..."
-
-cert_files=(
-  docker/nginx-certs/dgg.pem
-  docker/nginx-certs/dgg-key.pem
-  docker/ca-certs/rootCA.pem
-)
-
-for f in "${cert_files[@]}"; do
-  if [ -f "$f" ]; then
-    rm "$f"
-    ok "Removed $f"
-  fi
-done
-
-# ── 4. Remove cloned repositories (only with --all) ─────────────────────────
+# ── 4. Remove shared config and cloned repositories (only with --all) ───────
 
 if [ "$KEEP_REPOS" = false ]; then
-  info "Removing cloned repositories..."
+  info "Removing shared config and cloned repositories..."
+  rm -rf config
   for dir in website chat chat-gui live-ws Wikistiny; do
     if [ -d "$dir" ]; then
       rm -rf "$dir"
@@ -85,10 +88,10 @@ if [ "$KEEP_REPOS" = false ]; then
     fi
   done
 else
-  info "Keeping cloned repositories (use --all to remove them too)"
+  info "Keeping config/ and the cloned repositories (use --all to remove them too)"
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
 echo ""
-ok "Cleanup complete. Run scripts/setup.sh to start fresh."
+ok "Cleanup complete. Run bin/dgg init to start fresh."

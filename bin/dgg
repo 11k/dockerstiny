@@ -763,8 +763,15 @@ cmd_create() {
     info "Building website static assets..."
     (cd "$dir/website" && npm run build:dev >/dev/null) || die "Asset build failed — run it yourself: cd $dir/website && npm run build:dev"
     ok "Website assets built"
+  elif [ -f "$(repo_dir website)/config/manifest.php" ] && [ -d "$(repo_dir website)/static" ]; then
+    # The app won't boot without an asset manifest, so borrow the canonical
+    # checkout's build. It has that checkout's URLs baked in.
+    clone_dir "$(repo_dir website)/static" "$dir/website/static"
+    cp "$(repo_dir website)/config/manifest.php" "$dir/website/config/manifest.php"
+    skip "Asset build (--no-build): copied website/static as a stand-in — run 'npm run build:dev' in envs/$name/website for working WebSocket/CDN URLs"
   else
-    skip "Asset build (--no-build): run 'npm run build:dev' in envs/$name/website before browsing"
+    skip "Asset build (--no-build): the site won't boot until you run 'npm run build:dev' in envs/$name/website"
+    do_up=""
   fi
 
   ensure_env_images "$name"
