@@ -8,12 +8,12 @@ map $http_upgrade $connection_upgrade {
 server {
     include domain.conf;
 
-    listen 8081 ssl;
-    server_name 127.0.0.1;
+    listen @@PORT@@ ssl;
+    server_name @@CDN_HOST@@;
     root /www/www.destiny.gg/static;
 
-    ssl_certificate /etc/nginx/certs/dgg.pem;
-    ssl_certificate_key /etc/nginx/certs/dgg-key.pem;
+    ssl_certificate /etc/nginx/certs/wildcard.pem;
+    ssl_certificate_key /etc/nginx/certs/wildcard-key.pem;
 
     add_header X-XSS-Protection "1; mode=block";
     add_header Strict-Transport-Security "max-age=2700000; includeSubDomains; preload";
@@ -47,19 +47,26 @@ server {
     }
 
     location / {
-        rewrite .* "https://$domain:*:8080" permanent;
+        rewrite .* "https://@@HOST@@@@PORT_SUFFIX@@" permanent;
     }
 }
 
 server {
     include domain.conf;
 
-    listen 8080 ssl;
-    server_name 127.0.0.1;
+    # chat and live-ws are optional per environment. Naming them through
+    # variables makes nginx resolve them per request (via Docker's embedded
+    # DNS) instead of refusing to start when one isn't running.
+    resolver 127.0.0.11 valid=10s;
+    set $chat_upstream chat:1118;
+    set $livews_upstream live-ws:42069;
+
+    listen @@PORT@@ ssl default_server;
+    server_name @@HOST@@;
     root /www/www.destiny.gg/public;
 
-    ssl_certificate /etc/nginx/certs/dgg.pem;
-    ssl_certificate_key /etc/nginx/certs/dgg-key.pem;
+    ssl_certificate /etc/nginx/certs/wildcard.pem;
+    ssl_certificate_key /etc/nginx/certs/wildcard-key.pem;
 
     access_log /dev/stdout;
     error_log /dev/stdout;
@@ -72,7 +79,7 @@ server {
     error_page 503 /errors/503.html;
 
     location /ws {
-        proxy_pass http://chat:1118;
+        proxy_pass http://$chat_upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -82,23 +89,22 @@ server {
     # live-ws serves each socket at an exact pathname ("/" and "/tts") and
     # rejects anything else, so the /dggApi prefix this environment adds — prod
     # gives live-ws its own subdomain — has to come off before proxying. Both
-    # locations do that, this one explicitly: the longer prefix wins, and
-    # routing /dggApi/tts through the generic location below would rewrite it to
-    # "//tts" (nginx appends the unmatched remainder to the proxy_pass URI).
+    # locations do that; the longer prefix wins, so /dggApi/tts lands here.
     #
     # The OBS player connects to $WS_API_URL/tts, which is /dggApi/tts here.
     location /dggApi/tts {
-        proxy_pass http://live-ws:42069/tts;
+        proxy_pass http://$livews_upstream/tts$is_args$args;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
     }
 
-    # The main API socket, which the site opens at $WS_API_URL itself. The
-    # trailing slash strips the prefix, so live-ws receives "/".
+    # The main API socket, which the site opens at $WS_API_URL itself. With a
+    # variable upstream nginx sends exactly the URI written here, so live-ws
+    # receives "/" whatever followed the prefix.
     location /dggApi {
-        proxy_pass http://live-ws:42069/;
+        proxy_pass http://$livews_upstream/$is_args$args;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -157,23 +163,24 @@ server {
 
 # Public tunnel vhost. Replicate delivers TTS prediction results by webhook,
 # which it can only do if the callback is reachable from the internet, so an
-# ngrok tunnel forwards here. Matched by the tunnel hostname, so ordinary
-# local browsing (Host: 127.0.0.1) still gets the full site above.
+# ngrok tunnel forwards here (`dgg tunnel <env>` points the proxy's tunnel route
+# at this environment). Matched by the tunnel hostname, so ordinary local
+# browsing still gets the full site above.
 #
 # Only the webhook path is served — everything else 404s. This environment
 # runs with allowImpersonation on, so exposing the whole site would hand
 # anyone who finds the tunnel an admin session.
 #
-# setup.sh replaces the hostname below with NGROK_DOMAIN from .env. Left
-# unset it stays .invalid, a reserved TLD that no request can arrive for, so
+# dgg fills in the hostname below from NGROK_DOMAIN in dgg.conf. Left unset
+# it is tunnel.invalid — a reserved TLD that no request can arrive for, so
 # this block is inert until a tunnel is actually configured.
 server {
-    listen 8080 ssl;
-    server_name tunnel.invalid;
+    listen @@PORT@@ ssl;
+    server_name @@TUNNEL_HOST@@;
     root /www/www.destiny.gg/public;
 
-    ssl_certificate /etc/nginx/certs/dgg.pem;
-    ssl_certificate_key /etc/nginx/certs/dgg-key.pem;
+    ssl_certificate /etc/nginx/certs/wildcard.pem;
+    ssl_certificate_key /etc/nginx/certs/wildcard-key.pem;
 
     access_log /dev/stdout;
     error_log /dev/stdout;

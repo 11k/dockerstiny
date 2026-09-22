@@ -1,0 +1,33 @@
+# The one shared reverse proxy. It owns the HTTPS port and routes each request
+# to an environment by hostname, discovering environments from their container
+# labels — nothing here changes when environments come and go.
+#
+# Managed by `dgg proxy up|down|status`; `dgg up` starts it on demand.
+
+name: dgg-proxy
+
+services:
+    traefik:
+        image: traefik:v3.6
+        restart: unless-stopped
+        command:
+            - --providers.docker=true
+            - --providers.docker.exposedbydefault=false
+            - --providers.docker.network=${DGG_PROXY_NETWORK}
+            - --providers.file.directory=/etc/traefik/dynamic
+            - --providers.file.watch=true
+            - --entrypoints.websecure.address=:${DGG_PORT}
+            - --log.level=INFO
+        ports:
+            # Loopback only: these environments run with impersonation on.
+            - "127.0.0.1:${DGG_PORT}:${DGG_PORT}"
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+            - ./dynamic:/etc/traefik/dynamic:ro
+            - ../docker/nginx-certs:/certs:ro
+        networks:
+            - proxy
+
+networks:
+    proxy:
+        name: ${DGG_PROXY_NETWORK}

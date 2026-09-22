@@ -1,79 +1,115 @@
+# One Compose file, many environments. Every value that differs between
+# environments comes from envs/<name>/env, which `bin/dgg` generates and passes
+# with --env-file — so don't run `docker compose` here directly, use
+# `dgg compose <name> -- <args>` when you need the raw thing.
+#
+# Nothing publishes a host port. The shared Traefik proxy (proxy/) owns the one
+# HTTPS port and routes to each environment's nginx by hostname.
+
+x-website-volumes: &website-volumes
+    - ${WEBSITE_DIR}:/www/www.destiny.gg
+    # The worktree's config/config.local.php is a stub that requires
+    # /etc/dgg/env/website.config.php, which layers this environment's URLs
+    # over the shared base config in /etc/dgg/shared.
+    - ${DGG_SHARED_CONFIG_DIR}:/etc/dgg/shared:ro
+    - ${DGG_ENV_DIR}/config:/etc/dgg/env:ro
+
 services:
     nginx:
         image: nginx:1.20-alpine
         depends_on:
             - website
-            - chat
-        ports:
-            - "${PORT_WWW:-8080}:${PORT_WWW:-8080}" # www
-            - "${PORT_CDN:-8081}:${PORT_CDN:-8081}" # cdn
         volumes:
-            - ./website/static:/www/www.destiny.gg/static
-            - ./website/public:/www/www.destiny.gg/public
-            - ./website/custom:/www/www.destiny.gg/custom
-            - ./docker/nginx-config/dgg.local.conf:/etc/nginx/conf.d/dgg.local.conf
-            - ./docker/nginx-config/domain.conf:/etc/nginx/domain.conf
-            - ./docker/nginx-config/dgg_csp.conf:/etc/nginx/dgg_csp.conf
-            - ./docker/nginx-certs:/etc/nginx/certs
-        profiles:
-            - dev
+            - ${WEBSITE_DIR}/static:/www/www.destiny.gg/static
+            - ${WEBSITE_DIR}/public:/www/www.destiny.gg/public
+            - ${WEBSITE_DIR}/custom:/www/www.destiny.gg/custom
+            - ${DGG_ENV_DIR}/config/nginx/dgg.local.conf:/etc/nginx/conf.d/dgg.local.conf:ro
+            - ${DGG_ENV_DIR}/config/nginx/domain.conf:/etc/nginx/domain.conf:ro
+            - ./docker/nginx-config/dgg_csp.conf:/etc/nginx/dgg_csp.conf:ro
+            - ./docker/nginx-certs:/etc/nginx/certs:ro
+        networks:
+            default:
+                # Containers reach the site at the same URL the browser uses:
+                # inside this environment's network the public hostnames
+                # resolve straight to its nginx.
+                aliases:
+                    - ${DGG_HOST}
+                    - ${DGG_CDN_HOST}
+            proxy: {}
+        labels:
+            - "traefik.enable=true"
+            - "traefik.docker.network=${DGG_PROXY_NETWORK}"
+            # TLS passthrough: Traefik only reads the SNI name to pick an
+            # environment; nginx still terminates TLS, exactly as in prod.
+            - "traefik.tcp.routers.${COMPOSE_PROJECT_NAME}.rule=HostSNI(`${DGG_HOST}`) || HostSNI(`${DGG_CDN_HOST}`)"
+            - "traefik.tcp.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure"
+            - "traefik.tcp.routers.${COMPOSE_PROJECT_NAME}.tls.passthrough=true"
+            - "traefik.tcp.routers.${COMPOSE_PROJECT_NAME}.service=${COMPOSE_PROJECT_NAME}"
+            - "traefik.tcp.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=${DGG_PORT}"
     website:
+        image: dgg/website:dev
         build:
             context: .
             dockerfile: ./docker/Dockerfile-website
+            additional_contexts:
+                website: ${DGG_BASE_WEBSITE_DIR}
         depends_on:
-            - redis
-            - mysql
-        volumes:
-            - ./website:/www/www.destiny.gg
-        profiles:
-            - dev
+            redis:
+                condition: service_started
+            mysql:
+                condition: service_healthy
+        volumes: *website-volumes
     cron:
-        build:
-            context: .
-            dockerfile: ./docker/Dockerfile-website
+        image: dgg/website:dev
         command: ["php", "-f", "./cron/index.php"]
         depends_on:
-            - redis
-            - mysql
-        volumes:
-            - ./website:/www/www.destiny.gg
+            redis:
+                condition: service_started
+            mysql:
+                condition: service_healthy
+        volumes: *website-volumes
         profiles:
-            - dev
+            - cron
     worker:
+        image: dgg/worker:dev
         build:
             context: .
             dockerfile: ./docker/Dockerfile-worker
+            additional_contexts:
+                website: ${DGG_BASE_WEBSITE_DIR}
         restart: unless-stopped
         depends_on:
-            - redis
-            - mysql
-        volumes:
-            - ./website:/www/www.destiny.gg
+            redis:
+                condition: service_started
+            mysql:
+                condition: service_healthy
+        volumes: *website-volumes
         deploy:
-            replicas: 2
+            replicas: ${WORKER_REPLICAS:-2}
         profiles:
-            - dev
+            - worker
     chat:
+        # dgg/chat:base (built from origin's default branch) unless this
+        # environment has a chat worktree, in which case its own image.
+        image: ${CHAT_IMAGE}
         build:
-            context: .
-            dockerfile: ./docker/Dockerfile-chat
+            context: ${CHAT_DIR}
+            dockerfile: ${DGG_ROOT}/docker/Dockerfile-chat
+            additional_contexts:
+                certs: ./docker/ca-certs
         volumes:
-          - ./chat/settings.cfg:/app/settings.cfg
-          - ./chat/state.dc:/app/state.dc
+            - ${DGG_ENV_DIR}/config/chat/settings.cfg:/app/settings.cfg
         depends_on:
-            - redis
-            - mysql
-        extra_hosts:
-            - "host.docker.internal:host-gateway"
+            redis:
+                condition: service_started
+            mysql:
+                condition: service_healthy
         profiles:
-            - dev
+            - chat
     redis:
         image: redis:5.0.8-alpine
         volumes:
             - redis_data:/data
-        profiles:
-            - dev
     mysql:
         image: mariadb:10.11.6
         volumes:
@@ -84,53 +120,73 @@ services:
             MYSQL_DATABASE: destinygg
             MYSQL_USER: destiny
             MYSQL_PASSWORD: AslanIsEvil
-        profiles:
-            - dev
+        # cron and chat give up rather than retry if the database isn't
+        # accepting connections yet, so dependents wait for this.
+        healthcheck: &mysql-healthcheck
+            test: ["CMD", "mariadb", "-udestiny", "-pAslanIsEvil", "-e", "SELECT 1", "destinygg"]
+            interval: 2s
+            timeout: 5s
+            retries: 60
     live-ws:
+        image: ${LIVE_WS_IMAGE}
         build:
-            context: .
-            dockerfile: ./docker/Dockerfile-live-ws
+            context: ${LIVE_WS_DIR}
+            dockerfile: ${DGG_ROOT}/docker/Dockerfile-live-ws
+            additional_contexts:
+                certs: ./docker/ca-certs
         depends_on:
             - redis
-        env_file: ./live-ws/.env
+        env_file: ${DGG_ENV_DIR}/config/live-ws/.env
         profiles:
-            - dev
+            - live-ws
     wikistiny:
+        image: dgg/wikistiny:dev
         build:
             context: .
             dockerfile: ./docker/Dockerfile-wikistiny
         depends_on:
             - nginx
-        ports:
-            - "${PORT_WIKI:-8084}:80" # wiki
         volumes:
             - wiki_data:/var/www/data
-            - ./docker/wiki-config/LocalSettings.php:/var/www/html/LocalSettings.php:ro
-            - ./Wikistiny/extensions/Wikistiny/:/var/www/html/extensions/Wikistiny
+            - ${DGG_ENV_DIR}/config/wiki/LocalSettings.php:/var/www/html/LocalSettings.php:ro
+            - ${WIKISTINY_DIR}/extensions/Wikistiny/:/var/www/html/extensions/Wikistiny
         environment:
             WIKI_DB_NAME: "dgg_wiki"
             WIKI_PASS: "jaydrschoice"
             WIKI_NAME: "dggwiki"
             WIKI_ADMIN: "Admin"
-            WIKI_SERVER_PORT: "${PORT_WIKI:-8084}"
-        extra_hosts:
-            - "host.docker.internal:host-gateway"
+            WIKI_SERVER: "https://${DGG_WIKI_HOST}${DGG_PORT_SUFFIX}"
+        networks:
+            default: {}
+            proxy: {}
+        labels:
+            - "traefik.enable=true"
+            - "traefik.docker.network=${DGG_PROXY_NETWORK}"
+            # The wiki speaks plain HTTP, so here Traefik terminates TLS
+            # itself with the wildcard cert.
+            - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-wiki.rule=Host(`${DGG_WIKI_HOST}`)"
+            - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-wiki.entrypoints=websecure"
+            - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-wiki.tls=true"
+            - "traefik.http.services.${COMPOSE_PROJECT_NAME}-wiki.loadbalancer.server.port=80"
         profiles:
-            - dev
+            - wiki
 
     website-test:
-        build:
-            context: .
-            dockerfile: ./docker/Dockerfile-website
+        image: dgg/website:dev
         depends_on:
-            - mysql-test
+            # The suite skips its schema setup — then fails every database
+            # test — if it can't connect on the first try.
+            mysql-test:
+                condition: service_healthy
         volumes:
-            - ./website/config:/www/www.destiny.gg/config/
-            - ./website/lib:/www/www.destiny.gg/lib/
-            - ./website/tests:/www/www.destiny.gg/tests/
-            - ./website/tmp:/www/www.destiny.gg/tmp/
-            - ./website/phpunit.xml:/www/www.destiny.gg/phpunit.xml
-            - ./website/migrations.php:/www/www.destiny.gg/migrations.php
+            - ${WEBSITE_DIR}/config:/www/www.destiny.gg/config/
+            - ${WEBSITE_DIR}/lib:/www/www.destiny.gg/lib/
+            - ${WEBSITE_DIR}/tests:/www/www.destiny.gg/tests/
+            - ${WEBSITE_DIR}/tmp:/www/www.destiny.gg/tmp/
+            - ${WEBSITE_DIR}/phpunit.xml:/www/www.destiny.gg/phpunit.xml
+            - ${WEBSITE_DIR}/migrations.php:/www/www.destiny.gg/migrations.php
+            - ${DGG_SHARED_CONFIG_DIR}:/etc/dgg/shared:ro
+            - ${DGG_ENV_DIR}/config:/etc/dgg/env:ro
         command: ["vendor/bin/phpunit"]
         profiles:
             - test
@@ -144,10 +200,16 @@ services:
             MYSQL_DATABASE: destinygg
             MYSQL_USER: destiny
             MYSQL_PASSWORD: AslanIsEvil
+        healthcheck: *mysql-healthcheck
         logging:
             driver: none
         profiles:
             - test
+
+networks:
+    proxy:
+        name: ${DGG_PROXY_NETWORK}
+        external: true
 
 volumes:
     mysql_data:
