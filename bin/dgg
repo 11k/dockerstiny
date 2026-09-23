@@ -545,7 +545,7 @@ agent_settings_json() {
   local rules_allow="" rules_ask="" bin sub
   for bin in dgg "$ROOT/bin/dgg"; do
     rules_allow+="      \"Bash($bin)\","$'\n'
-    for sub in ls status url path ps logs help up down restart build test migrate render "snapshot ls" "snapshot restore" "proxy status"; do
+    for sub in ls status url path ps logs help create add up down restart build test migrate render "snapshot ls" "snapshot restore" "proxy status"; do
       rules_allow+="      \"Bash($bin $sub:*)\","$'\n'
     done
     for sub in rm remove destroy "snapshot save" "snapshot rm"; do
@@ -616,20 +616,20 @@ write_agent_files() {
   for svc in chat live-ws; do
     if ! has_profile "$svc"; then
       if [ "$svc" = "chat" ]; then
-        absent+="- **chat is not running here**, so \`/ws\` returns 502."$'\n'
+        absent+="- **chat is not running here**, so \`/ws\` returns 502. \`$dgg add $name chat --base\` runs it; without \`--base\` you also get a worktree."$'\n'
       else
-        absent+="- **live-ws is not running here**, so \`/dggApi\` returns 502."$'\n'
+        absent+="- **live-ws is not running here**, so \`/dggApi\` returns 502. \`$dgg add $name live-ws --base\` runs it; without \`--base\` you also get a worktree."$'\n'
       fi
     elif [ ! -d "$dir/$svc" ]; then
-      base+="- **$svc** runs a shared image built from origin's default branch. There is no checkout of it here; changing it means recreating the environment with \`--with $svc\`."$'\n'
+      base+="- **$svc** runs a shared image built from origin's default branch. There is no checkout of it here; to change it, \`$dgg add $name $svc\` adds a worktree and rebuilds."$'\n'
     fi
   done
   if [ ! -d "$dir/chat-gui" ]; then
-    base+="- **chat-gui** is the canonical checkout at \`$(repo_dir chat-gui)\`, shared with other environments — don't edit it for this one."$'\n'
+    base+="- **chat-gui** is the canonical checkout at \`$(repo_dir chat-gui)\`, shared with other environments — don't edit it for this one. To change chat-gui here, \`$dgg add $name chat-gui\` adds a worktree and rebuilds the website's assets."$'\n'
   fi
-  if ! has_profile cron; then absent+="- **cron is not running here.**"$'\n'; fi
+  if ! has_profile cron; then absent+="- **cron is not running here** (\`$dgg add $name cron\` to switch it on)."$'\n'; fi
   if ! has_profile worker || [ "$WORKER_REPLICAS" = "0" ]; then
-    absent+="- **No queue workers here**, so queued (async) jobs are never processed."$'\n'
+    absent+="- **No queue workers here**, so queued (async) jobs are never processed (\`$dgg add $name worker\` to switch them on)."$'\n'
   fi
 
   cat > "$dir/CLAUDE.md" <<MARKDOWN
@@ -990,8 +990,8 @@ cmd_create() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --with) with="$2"; shift 2 ;;
-      --without) without="$2"; shift 2 ;;
-      --minimal) without="live-ws,cron,worker"; shift ;;
+      --without) without="${without:+$without,}$2"; shift 2 ;;
+      --minimal) without="${without:+$without,}live-ws,cron,worker"; shift ;;
       --wiki) wiki=1; shift ;;
       --workers) workers="$2"; shift 2 ;;
       --snapshot) snapshot="$2"; shift 2 ;;
@@ -1164,6 +1164,125 @@ print_urls() {
   info "Admin: $site/impersonate?username=admin"
   if has_profile wiki; then info "Wiki:  https://$DGG_WIKI_HOST$DGG_PORT_SUFFIX"; fi
   info "Code:  envs/$1/"
+}
+
+cmd_add() {
+  require_init
+  local base_only="" pos=() a
+  for a in "$@"; do
+    case "$a" in
+      --base) base_only=1 ;;
+      -*) die "Unknown option for add: $a" ;;
+      *) pos+=("$a") ;;
+    esac
+  done
+  resolve_env "${pos[@]}"
+  [ ${#ARGS[@]} -gt 0 ] || die "Usage: dgg add [env] <service>[:branch]… [--base]"
+
+  local name="$ENV_NAME" dir item svc branch running changed_profiles="" rebuild_assets="" build_svcs=() up_svcs=()
+  dir="$(env_dir "$name")"
+  running="$(running_count "$name")"
+  load_env "$name"
+  LOG_FILE="$dir/create.log"
+
+  for item in "${ARGS[@]}"; do
+    svc="${item%%:*}"
+    if [[ "$item" == *:* ]]; then branch="${item#*:}"; else branch="$name"; fi
+
+    case "$svc" in
+      cron|worker)
+        [[ "$item" != *:* ]] || die "$svc has no worktree; it's just switched on: dgg add $name $svc"
+        if has_profile "$svc"; then skip "$svc already runs in $name"; continue; fi
+        DGG_PROFILES="$DGG_PROFILES,$svc"; changed_profiles=1
+        if [ "$svc" = "worker" ] && [ "$WORKER_REPLICAS" = "0" ]; then WORKER_REPLICAS=2; fi
+        up_svcs+=("$svc")
+        ok "$svc switched on" ;;
+
+      website)
+        # Every environment has a website checkout; adding it means putting the
+        # detached one onto a branch so changes there can be committed.
+        [ -z "$base_only" ] || die "--base doesn't apply to website"
+        local current
+        current="$(git -C "$dir/website" branch --show-current 2>/dev/null || true)"
+        if [ -n "$current" ]; then skip "website is already on branch $current"; continue; fi
+        require_repo website; fetch_repo website
+        if git -C "$dir/website" show-ref --verify --quiet "refs/heads/$branch"; then
+          git -C "$dir/website" checkout --quiet "$branch" ||
+            die "website: couldn't check out '$branch' — is it checked out in another environment? (dgg ls)"
+          ok "website: now on existing branch $branch"
+        elif git -C "$dir/website" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+          git -C "$dir/website" checkout --quiet --track -b "$branch" "origin/$branch"
+          ok "website: now on $branch (tracking origin/$branch)"
+        else
+          git -C "$dir/website" checkout --quiet -b "$branch"
+          ok "website: now on new branch $branch"
+        fi ;;
+
+      chat-gui)
+        [ -z "$base_only" ] || die "--base doesn't apply to chat-gui (it isn't a running service)"
+        if [ -d "$dir/chat-gui" ]; then skip "chat-gui worktree already exists in $name"; continue; fi
+        require_repo chat-gui; fetch_repo chat-gui
+        git -C "$(repo_dir chat-gui)" worktree prune 2>/dev/null || true
+        add_worktree chat-gui "$dir/chat-gui" "$branch"
+        install_deps "$dir/chat-gui" "$(repo_dir chat-gui)" package-lock.json node_modules .package-lock.json npm ci
+        link_chat_gui "$dir/website" "$dir/chat-gui"
+        ok "website → chat-gui at envs/$name/chat-gui"
+        rebuild_assets=1 ;;
+
+      chat|live-ws)
+        if ! has_profile "$svc"; then
+          DGG_PROFILES="$DGG_PROFILES,$svc"; changed_profiles=1
+          ok "$svc switched on"
+        fi
+        if [ -n "$base_only" ]; then
+          if [ -d "$dir/$svc" ]; then
+            skip "$svc already has a worktree here; --base doesn't apply"
+          elif [ -z "$changed_profiles" ] || [[ ",$DGG_PROFILES," != *",$svc,"* ]]; then
+            skip "$svc already runs here from the shared image"
+          else
+            up_svcs+=("$svc")
+          fi
+          continue
+        fi
+        if [ -d "$dir/$svc" ]; then skip "$svc worktree already exists in $name"; continue; fi
+        require_repo "$svc"; fetch_repo "$svc"
+        git -C "$(repo_dir "$svc")" worktree prune 2>/dev/null || true
+        add_worktree "$svc" "$dir/$svc" "$branch"
+        if [ "$svc" = "chat" ]; then
+          CHAT_IMAGE="dgg-$name/chat:dev"; CHAT_DIR="$dir/chat"
+        else
+          LIVE_WS_IMAGE="dgg-$name/live-ws:dev"; LIVE_WS_DIR="$dir/live-ws"
+        fi
+        build_svcs+=("$svc"); up_svcs+=("$svc") ;;
+
+      *) die "Can't add '$svc' (choose from: ${WORKTREE_SERVICES[*]} cron worker)" ;;
+    esac
+  done
+
+  DGG_PROFILES="${DGG_PROFILES#,}"
+  write_env_file "$name"
+  render_env "$name"
+
+  if [ -n "$rebuild_assets" ]; then
+    info "Rebuilding website static assets against the new chat-gui..."
+    quietly in_dir "$dir/website" npm run build:dev || die "Asset build failed — retry with: cd $dir/website && npm run build:dev"
+    ok "Website assets built"
+  fi
+  if [ ${#build_svcs[@]} -gt 0 ]; then
+    info "Building images from worktrees: ${build_svcs[*]}"
+    quietly dc "$name" build "${build_svcs[@]}"
+  fi
+  if [ ${#up_svcs[@]} -gt 0 ]; then
+    ensure_env_images "$name"
+    if [ "$running" != "0" ]; then
+      ensure_proxy
+      dc "$name" up -d "${up_svcs[@]}"
+      # nginx resolves chat/live-ws per request, so nothing else restarts.
+      ok "Started: ${up_svcs[*]}"
+    else
+      info "$name is stopped; ${up_svcs[*]} will start with: dgg up $name"
+    fi
+  fi
 }
 
 cmd_up() {
@@ -1581,6 +1700,11 @@ Environments
       --no-snapshot           Start from an empty, freshly migrated DB
       --no-build              Skip the website asset build
       --no-up                 Set everything up but don't start containers
+  add [name] svc[:branch]… [--base]
+                          Grow an environment: a worktree for website, chat,
+                          chat-gui or live-ws (branch defaults to <name>), or
+                          switch on cron/worker. --base runs chat/live-ws from
+                          the shared image instead of a worktree.
   ls [--json]             List environments
   status [name] [--json]  Per-service health, worktrees and URLs; exits
                           non-zero if something is wrong
@@ -1622,6 +1746,7 @@ main() {
   case "$cmd" in
     init) cmd_init "$@" ;;
     create|new) cmd_create "$@" ;;
+    add) cmd_add "$@" ;;
     up|start) cmd_up "$@" ;;
     down|stop) cmd_down "$@" ;;
     restart) cmd_restart "$@" ;;

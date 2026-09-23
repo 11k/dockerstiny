@@ -37,12 +37,16 @@ dgg create tts-fix --with website,live-ws     # worktrees on a new "tts-fix" bra
 dgg create emotes --with chat-gui:feat/emotes # …or name the branch (existing or new)
 dgg create chat-bug --with chat --minimal     # skip live-ws, cron and the queue workers
 dgg ls                                        # what exists, what's running, which branches
+dgg add chat-bug chat-gui                     # turns out the fix needs UI changes too: add a worktree
+dgg add chat-bug live-ws --base               # …or just switch a service on from the shared image
 dgg down tts-fix                              # stop it; database and worktrees are kept
 dgg up tts-fix
 dgg rm tts-fix                                # containers, volumes, worktrees — never branches
 ```
 
 `--with` lists the services you're *changing*. Each gets a git worktree in `envs/<name>/<service>` on a branch named after the environment (created from origin's default branch if it doesn't exist yet). Services you don't list still run, from shared images built off origin's default branch — `dgg update` refreshes those. The website is the exception: every environment gets a website checkout, because its asset build bakes in the environment's URLs. Without `--with website` it's a detached checkout of the default branch.
+
+You don't have to get `--with` right up front: `dgg add <name> <service>[:branch]` adds a worktree to an existing environment and does whatever that implies (re-links and rebuilds the website's assets for chat-gui, builds and starts the image for chat or live-ws, puts the website checkout on a branch). `dgg add <name> cron`/`worker` switches those on, and `--base` runs chat or live-ws from the shared image without a worktree.
 
 Inside `envs/<name>/` the name can be left off: `dgg logs -f chat`, `dgg exec website bash`, `dgg migrate`, `dgg test`. Run `dgg help` for everything, and `dgg compose <name> -- <args>` for raw Compose access.
 
@@ -68,6 +72,7 @@ dgg is meant to be driven by an agent as comfortably as by hand:
 * `dgg status <name> --json` and `dgg ls --json` give structured state; `dgg status` exits non-zero when a service is down (and knows cron exiting is normal).
 * Without a terminal, output is plain and short. Install and build output goes to `envs/<name>/create.log` and only surfaces on failure (`DGG_VERBOSE=1` to stream it).
 * Every environment gets a generated `envs/<name>/CLAUDE.md` with its URL, its worktrees and branches, and how each kind of change takes effect.
+* `CLAUDE.md` tells an agent that a feature means a new environment, how to choose its services from where the code lives, and to grow it with `dgg add` rather than recreate — so "implement X" from a session started in this directory creates the environment itself.
 * Claude Code permission rules ship in `.claude/settings.json`, and dgg writes the same rules into each environment and worktree (Claude Code doesn't read settings from parent directories). Routine commands run without prompts; `dgg rm`, `dgg snapshot save|rm` and `scripts/cleanup.sh` always ask; files holding live API keys (`config/` and the rendered chat/live-ws configs) can't be read.
 * `dgg snapshot save` refuses to replace an existing snapshot without `--force`.
 

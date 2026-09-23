@@ -71,12 +71,30 @@ Nothing environment-specific lives in a repo. `dgg up`/`create`/`render` regener
 
 To change a setting for every environment, edit the file in `config/`; to change how URLs are derived, edit `render_env` in `bin/dgg`.
 
+## Starting work on a feature
+
+A feature gets its own environment. When asked to implement, fix or investigate something and no environment is named, create one rather than editing the canonical clones (`website/`, `chat/`, `chat-gui/`, `live-ws/` at this level are shared object stores, not places to work). Don't ask which services are needed — decide, and grow the environment later if the guess was short.
+
+1. **Name it** from the feature: short, lowercase, dashes (`mute-button`, `tts-webhook-retry`). It becomes the hostname and the branch name in every worktree.
+2. **Pick the services whose code you will change.** Check where the code lives with a quick grep in the canonical clones before deciding.
+   - `website` — PHP, Twig views, the HTTP API, migrations, the site's own JS/TS in `website/assets/`.
+   - `chat-gui` — how chat renders and behaves in the browser: messages, commands, emotes, menus, the chat CSS. Its build is compiled into the website bundle.
+   - `chat` — the Go server: what messages are accepted, broadcast, throttled, persisted; events other services subscribe to.
+   - `live-ws` — pushing stream/emote/TTS/auction state to browsers over the `/dggApi` socket.
+   Most features touch one or two. A chat feature with a new message type is `chat` + `chat-gui`; a site page is `website`; a live-updating page is `website` + `live-ws`.
+3. **Create it:** `dgg create <name> --with <svc>[,<svc>…]`. Add `--minimal` when the work is purely `website`/`chat-gui` and needs no live-ws, cron or queue workers. It takes 30–60 seconds; run it in the foreground and wait.
+4. **Work in `envs/<name>/`.** Its generated `CLAUDE.md` is loaded as soon as you read a file there. Tell the user the environment's name and URL.
+5. **Wrong guess?** `dgg add <name> <svc>` adds a worktree (and switches the service on, rebuilds its image or the website assets as needed); `dgg add <name> <svc> --base` just switches chat/live-ws on from the shared image; `dgg add <name> cron|worker` switches those on. Prefer this over recreating.
+
+If an environment for the feature already exists (`dgg ls`), use it. If the user names one, use that.
+
 ## Common Commands
 
 ```bash
 dgg init                                   # one-time setup (idempotent)
 dgg create <name> --with website,chat-gui  # new environment; worktrees on branch <name>
 dgg create <name> --with chat:some-branch --minimal
+dgg add <name> chat-gui                    # grow an env: worktree for website|chat|chat-gui|live-ws, or switch on cron|worker (--base: run chat/live-ws without a worktree)
 dgg ls [--json]
 dgg status <name> [--json]                 # per-service health + worktrees; non-zero exit on problems (cron "exited (0)" is normal)
 dgg up <name> / dgg down <name>            # down keeps the DB and worktrees
