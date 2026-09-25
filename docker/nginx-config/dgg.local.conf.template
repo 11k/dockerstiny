@@ -40,6 +40,15 @@ server {
     location ^~ /uploads/ {
         expires 12h;
         try_files $uri =404;
+
+        # `^~` skips the regex locations above; the chat fetches the emote and
+        # flair manifests from here cross-origin.
+        location ~* \.json$ {
+            add_header "Access-Control-Allow-Origin" "*";
+            add_header "Access-Control-Allow-Methods" "GET";
+            expires 12h;
+            try_files $uri =404;
+        }
     }
     location ~ ^/\. { deny  all; }
     location ~* \.(avif|jpg|jpe?g|png|gif|ico|css|js|map|svg|eot|ttf|woff|woff2|wasm|otf)$ {
@@ -139,7 +148,7 @@ server {
             set $DEFAULT_SRC "default-src *";
             set $SCRIPT_SRC "script-src 'wasm-unsafe-eval' 'unsafe-inline' $domain:* https://apis.google.com www.google.com www.google-analytics.com https://ssl.google-analytics.com https://*.googlesyndication.com https://googleads.g.doubleclick.net https://*.gstatic.com";
             set $OBJECT_SRC "object-src 'none'";
-            set $STYLE_SRC "style-src 'self' data: 'unsafe-inline' $domain:* fonts.googleapis.com";
+            set $STYLE_SRC "style-src 'self' data: 'unsafe-inline' $domain:* *.r2.dev fonts.googleapis.com";
             set $IMAGE_SRC "img-src * data: blob:";
             set $MEDIA_SRC "media-src 'self' $domain:* *.r2.dev *.live-video.net blob:";
             set $FRAME_SRC "frame-src 'self' player.kick.com kick.com *.vimeo.com rumble.com odysee.com *.facebook.com https://www.youtube.com youtube.com https://www.google.com www.twitch.tv clips.twitch.tv player.twitch.tv googleads.g.doubleclick.net player.kick.cx";
