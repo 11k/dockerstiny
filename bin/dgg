@@ -489,6 +489,9 @@ render_env() {
 \$config['cdn']['protocol'] = 'https://';
 $cdn_port_php
 \$config['embed']['twitchParents'] = ['$DGG_HOST'];
+// Emote and flair manifests have fixed keys; keep each environment's apart in
+// a shared uploads bucket.
+\$config['uploads']['chat_assets_prefix'] = 'envs/$name';
 $wiki_link_php
 
 return \$config;
