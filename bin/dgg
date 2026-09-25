@@ -670,6 +670,8 @@ The TLS cert is trusted system-wide (mkcert), so browsers and curl need no flags
 - Ask the user before \`$dgg rm\`, \`$dgg snapshot save\` or \`scripts/cleanup.sh\`: they delete work or change what every future environment starts from.
 - This environment's database is its own. Other environments are someone else's work in progress — leave them alone.
 MARKDOWN
+  # For agents that read AGENTS.md instead
+  ln -sfn CLAUDE.md "$dir/AGENTS.md"
 
   mkdir -p "$dir/.claude"
   agent_settings_json > "$dir/.claude/settings.json"

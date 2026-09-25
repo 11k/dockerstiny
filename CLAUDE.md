@@ -128,7 +128,7 @@ npm run build:dev  # one-off dev build
 
 - Output is plain (no colour) and terse when stdout isn't a terminal. Install/build output goes to `envs/<name>/create.log` (base images: `.dgg/build.log`) and is shown only on failure; `DGG_VERBOSE=1` streams it.
 - `dgg exec` drops the TTY automatically when there isn't one; `dgg logs` defaults to `--tail 100`.
-- Each environment gets a generated `envs/<name>/CLAUDE.md` (its URL, which services are worktrees and on which branch, how each kind of change takes effect) — read it before working in one.
+- Each environment gets a generated `envs/<name>/CLAUDE.md` (`AGENTS.md` links to it) (its URL, which services are worktrees and on which branch, how each kind of change takes effect) — read it before working in one.
 - Permissions: `.claude/settings.json` here allows the routine dgg commands (including `snapshot restore` — it only touches one environment and keeps a backup), keeps `dgg rm`, `dgg snapshot save|rm` and `scripts/cleanup.sh` on ask, and denies reading files that hold live API keys (`config/`, the rendered chat and live-ws configs, the canonical clones' local configs). Claude Code only reads settings from the directory a session starts in, so dgg writes the same rules to `envs/<name>/.claude/settings.json` and to `.claude/settings.local.json` in each worktree (`agent_settings_json` in `bin/dgg` — keep the two lists in sync).
 - Don't read `config/`. To change a shared setting, tell the user which key to edit.
 
