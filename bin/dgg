@@ -1436,6 +1436,19 @@ cmd_url() {
   echo "https://$DGG_HOST$DGG_PORT_SUFFIX"
 }
 
+cmd_open() {
+  require_init
+  resolve_env "$@"
+  load_env "$ENV_NAME"
+  local url="https://$DGG_HOST$DGG_PORT_SUFFIX" opener
+  if command -v open >/dev/null 2>&1; then opener=open
+  elif command -v xdg-open >/dev/null 2>&1; then opener=xdg-open
+  else die "No browser opener (open, xdg-open) found; the site is $url"
+  fi
+  [ "$(running_count "$ENV_NAME")" = "0" ] && warn "$ENV_NAME isn't running (dgg up $ENV_NAME)"
+  "$opener" "$url" >/dev/null 2>&1 || die "Couldn't open $url"
+}
+
 cmd_path() {
   require_init
   resolve_env "$@"
@@ -1719,6 +1732,7 @@ Environments
 
 Working in one ([name] can be omitted inside envs/<name>/)
   url [name]              Print the site URL
+  open [name]             Open the site in the default browser
   path [name] [svc]       Print a directory: cd "$(dgg path foo website)"
   logs [name] [args…]     docker compose logs
   ps [name]               docker compose ps
@@ -1759,6 +1773,7 @@ main() {
     ls|list) cmd_ls "$@" ;;
     status) cmd_status "$@" ;;
     url) cmd_url "$@" ;;
+    open) cmd_open "$@" ;;
     path) cmd_path "$@" ;;
     logs) cmd_logs "$@" ;;
     ps) cmd_ps "$@" ;;
