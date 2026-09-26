@@ -27,7 +27,7 @@ dgg init
 dgg create my-feature --with website,chat-gui
 ```
 
-4. Open `https://my-feature.dgg.localhost`, or `https://my-feature.dgg.localhost/impersonate?username=admin` to log in as the admin. Your code is in `envs/my-feature/`.
+4. Open `https://my-feature.dgg.localhost` (`dgg open my-feature`). To log in, `dgg open my-feature --as admin` (any username), or `https://my-feature.dgg.localhost/impersonate` to type one in. Your code is in `envs/my-feature/`.
 5. When the feature ships, `dgg rm my-feature`. To tear down everything, run `./scripts/cleanup.sh`.
 
 ## Environments

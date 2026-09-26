@@ -103,6 +103,7 @@ dgg rm <name>                              # containers, volumes, worktrees (ref
 # Inside envs/<name>/ the name is optional
 dgg logs <name> -f chat
 dgg exec <name> website bash
+dgg open <name> [--as [user]]              # open the site in the browser, optionally logged in as someone
 dgg build <name>                           # rebuild + restart chat/live-ws from their worktrees
 dgg test <name>                            # website PHPUnit suite
 dgg migrate <name>                         # vendor/bin/doctrine-migrations migrate --no-interaction
@@ -120,8 +121,9 @@ dgg update                                 # refresh base images from origin's d
 npm run watch      # watch mode
 npm run build:dev  # one-off dev build
 
-# Impersonate a user (in browser)
-# https://<name>.dgg.localhost/impersonate?username=admin
+# Log in as a user (dev only — impersonation skips the auth providers)
+dgg open <name> --as admin                 # any username; bare --as opens the impersonate page
+# In the browser: https://<name>.dgg.localhost/impersonate, or "Impersonate" in the navbar's log-in / account menu
 ```
 
 ## Agent notes
