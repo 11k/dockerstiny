@@ -440,7 +440,7 @@ EOF
 # Regenerate everything under envs/<name>/config, plus the two generated
 # (gitignored) files the website worktree needs.
 render_env() {
-  local name="$1" dir cfg site cdn_port_php wiki_link_php
+  local name="$1" dir cfg site cdn_port_php wiki_link_php override_php
   dir="$(env_dir "$name")"
   cfg="$dir/config"
   load_env "$name"
@@ -473,6 +473,15 @@ render_env() {
   else
     wiki_link_php="// (no wiki in this environment)"
   fi
+  # envs/<name>/website.override.php is the user's own, never generated: it
+  # goes last so it can change anything, shared settings included.
+  if [ -f "$dir/website.override.php" ]; then
+    cp "$dir/website.override.php" "$cfg/website.override.php"
+    override_php="require __DIR__ . '/website.override.php';"
+  else
+    rm -f "$cfg/website.override.php"
+    override_php="// (no envs/$name/website.override.php)"
+  fi
   cat > "$cfg/website.config.php" <<EOF
 <?php
 
@@ -493,6 +502,9 @@ $cdn_port_php
 // a shared uploads bucket.
 \$config['uploads']['chat_assets_prefix'] = 'envs/$name';
 $wiki_link_php
+
+// This environment's own overrides, from envs/$name/website.override.php.
+$override_php
 
 return \$config;
 EOF
@@ -669,6 +681,7 @@ The TLS cert is trusted system-wide (mkcert), so browsers and curl need no flags
 
 - Never run \`docker compose\` directly — the Compose file only works through dgg. For anything dgg lacks: \`$dgg compose $name -- <args>\`.
 - These are generated; don't edit them: everything in \`config/\` here, \`website/config/config.local.php\`, \`website/.env\`, \`.claude/settings*.json\`.
+- To change a website setting for this environment only, set it on \`\$config\` in \`$dir/website.override.php\` (create it if missing), then \`$dgg render $name\`. It's applied after the shared config and isn't regenerated.
 - Settings shared by all environments live in \`$SHARED_CONFIG_DIR\` and contain live API keys. Don't read them; if one needs changing, ask the user.
 - Ask the user before \`$dgg rm\`, \`$dgg snapshot save\` or \`scripts/cleanup.sh\`: they delete work or change what every future environment starts from.
 - This environment's database is its own. Other environments are someone else's work in progress — leave them alone.

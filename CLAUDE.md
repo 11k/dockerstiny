@@ -71,6 +71,8 @@ Nothing environment-specific lives in a repo. `dgg up`/`create`/`render` regener
 
 To change a setting for every environment, edit the file in `config/`; to change how URLs are derived, edit `render_env` in `bin/dgg`.
 
+To change a website setting for one environment, create `envs/<name>/website.override.php` and set keys on `$config` (e.g. `$config['allowImpersonation'] = false;`). It's yours, not generated: `dgg render`/`up` copies it into `config/` and applies it last, and PHP picks it up without a restart.
+
 ## Starting work on a feature
 
 A feature gets its own environment. When asked to implement, fix or investigate something and no environment is named, create one rather than editing the canonical clones (`website/`, `chat/`, `chat-gui/`, `live-ws/` at this level are shared object stores, not places to work). Don't ask which services are needed — decide, and grow the environment later if the guess was short.
