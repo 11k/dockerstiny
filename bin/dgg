@@ -1715,12 +1715,106 @@ cmd_snapshot() {
   esac
 }
 
+# Move a canonical clone to origin's default branch — only if it's on that
+# branch with no changes of its own, since any branch may be checked out there.
+# New environments take their dependencies from these clones, the website and
+# worker images their composer.lock, and environments without a chat-gui
+# worktree build against the chat-gui one.
+fast_forward_repo() {
+  local svc="$1" repo ref branch head
+  repo="$(repo_dir "$svc")"
+  ref="$(default_ref "$svc")"
+  branch="${ref#origin/}"
+  head="$(git -C "$repo" symbolic-ref --quiet --short HEAD || echo "a detached HEAD")"
+  if [ "$head" != "$branch" ]; then
+    warn "$svc: on $head, not $branch — left as is"
+  elif [ -n "$(git -C "$repo" status --porcelain --untracked-files=no)" ]; then
+    warn "$svc: has uncommitted changes — left as is"
+  elif ! git -C "$repo" merge --quiet --ff-only "$ref" >/dev/null 2>&1; then
+    warn "$svc: $branch has commits that aren't on $ref — left as is"
+  else
+    ok "$svc → $(git -C "$repo" log -1 --format='%h %s')"
+  fi
+}
+
+# changed_since <service> <rev> <path>: did <path> change between <rev> and HEAD?
+changed_since() {
+  ! git -C "$(repo_dir "$1")" diff --quiet "$2" HEAD -- "$3"
+}
+
+# The throwaway environment `dgg update` migrates the default snapshot in.
+UPDATE_ENV="dgg-update"
+
+# Restore the default snapshot into a temporary environment, which migrates it
+# with the latest website code, and save it back. New environments then only
+# run the migrations written since the last update.
+refresh_default_snapshot() {
+  local name="$UPDATE_ENV"
+  if [ ! -f "$(snapshot_path default)" ]; then
+    skip "No 'default' snapshot yet — the next environment you create makes one"
+    return
+  fi
+  [ ! -e "$(env_dir "$name")" ] ||
+    die "envs/$name already exists (left by an interrupted update?). Remove it with: dgg rm $name --force"
+
+  info "Migrating the 'default' snapshot in a temporary environment..."
+  # A separate dgg, so a failing step still stops it (set -e doesn't apply
+  # inside a condition). No asset build: nothing gets served, the website just
+  # has to boot.
+  if ! quietly "$ROOT/bin/dgg" create "$name" --minimal --without chat --no-build ||
+     [ "$(running_count "$name")" = "0" ]; then
+    quietly "$ROOT/bin/dgg" rm "$name" --force || true
+    die "Couldn't migrate the snapshot; 'default' is unchanged. Details: ${LOG_FILE#"$ROOT"/}"
+  fi
+
+  cp "$(snapshot_path default)" "$(snapshot_path pre-update)"
+  dc "$name" stop >/dev/null 2>&1
+  snapshot_save_volume "dgg-${name}_mysql_data" default
+  info "The previous one is kept as 'pre-update'"
+  quietly "$ROOT/bin/dgg" rm "$name" --force
+}
+
 cmd_update() {
   require_init
-  local svc
-  for svc in chat live-ws; do
-    require_repo "$svc"
+  local refresh_snapshot=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-snapshot) refresh_snapshot=""; shift ;;
+      *) die "Unknown option for update: $1" ;;
+    esac
+  done
+  LOG_FILE="$STATE_DIR/update.log"
+  mkdir -p "$STATE_DIR"
+  : > "$LOG_FILE"
+
+  local svc repo
+  local -A before=()
+  for svc in website chat chat-gui live-ws Wikistiny; do
+    [ -d "$(repo_dir "$svc")/.git" ] || continue
     fetch_repo "$svc"
+    before[$svc]="$(git -C "$(repo_dir "$svc")" rev-parse HEAD)"
+    fast_forward_repo "$svc"
+  done
+
+  # Refresh the canonical clones' dependencies when their lockfiles moved, so
+  # new worktrees can keep cloning them instead of installing from scratch.
+  repo="$(repo_dir website)"
+  if changed_since website "${before[website]}" composer.lock || [ ! -e "$repo/vendor/autoload.php" ]; then
+    info "Installing website PHP dependencies..."
+    quietly in_dir "$repo" composer install
+  fi
+  if changed_since website "${before[website]}" package-lock.json || [ ! -e "$repo/node_modules/.package-lock.json" ]; then
+    info "Installing website npm dependencies..."
+    quietly in_dir "$repo" npm ci
+    link_chat_gui "$repo" "$(repo_dir chat-gui)"
+  fi
+  repo="$(repo_dir chat-gui)"
+  if changed_since chat-gui "${before[chat-gui]}" package-lock.json || [ ! -e "$repo/node_modules/.package-lock.json" ]; then
+    info "Installing chat-gui dependencies..."
+    quietly in_dir "$repo" npm ci
+  fi
+
+  for svc in chat live-ws; do
     ensure_base_worktree "$svc"
     git -C "$BASE_DIR/$svc" checkout --quiet --detach "$(default_ref "$svc")"
     ok "$svc base → $(git -C "$BASE_DIR/$svc" log -1 --format='%h %s')"
@@ -1728,10 +1822,17 @@ cmd_update() {
   local img
   for img in website worker chat live-ws; do
     info "Building $(base_image_tag "$img")..."
-    build_base_image "$img"
+    quietly build_base_image "$img"
   done
-  if image_exists dgg/wikistiny:dev; then build_base_image wikistiny; fi
-  ok "Base images rebuilt. Recreate running environments to use them: dgg up <name>"
+  if image_exists dgg/wikistiny:dev; then
+    info "Building dgg/wikistiny:dev..."
+    quietly build_base_image wikistiny
+  fi
+  ok "Base images rebuilt"
+
+  if [ -n "$refresh_snapshot" ]; then refresh_default_snapshot; fi
+
+  ok "New environments start from the latest code. Existing ones keep theirs: rebase their worktrees, then dgg migrate <name> and dgg up <name>"
 }
 
 cmd_help() {
@@ -1744,7 +1845,12 @@ Setup
   init [--domain D] [--port P] [--ngrok-domain N] [--no-build]
                           One-time setup: repos, TLS cert, shared config,
                           proxy, base images. Safe to re-run.
-  update                  Move base images to origin's latest default branches
+  update [--no-snapshot]  Bring everything new environments start from up to
+                          origin's default branches: the canonical clones
+                          (when on that branch and clean) and their
+                          dependencies, the base images, and the 'default'
+                          DB snapshot (migrated; the old one is kept as
+                          'pre-update'). Existing environments are untouched.
 
 Environments
   create <name> [options] Create and start an environment

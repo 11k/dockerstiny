@@ -44,7 +44,7 @@ dgg up tts-fix
 dgg rm tts-fix                                # containers, volumes, worktrees — never branches
 ```
 
-`--with` lists the services you're *changing*. Each gets a git worktree in `envs/<name>/<service>` on a branch named after the environment (created from origin's default branch if it doesn't exist yet). Services you don't list still run, from shared images built off origin's default branch — `dgg update` refreshes those. The website is the exception: every environment gets a website checkout, because its asset build bakes in the environment's URLs. Without `--with website` it's a detached checkout of the default branch.
+`--with` lists the services you're *changing*. Each gets a git worktree in `envs/<name>/<service>` on a branch named after the environment (created from origin's default branch if it doesn't exist yet). Services you don't list still run, from shared images built off origin's default branch — `dgg update` refreshes those, along with the canonical clones and the `default` database snapshot (migrated), so the next environment starts from the latest code. The website is the exception: every environment gets a website checkout, because its asset build bakes in the environment's URLs. Without `--with website` it's a detached checkout of the default branch.
 
 You don't have to get `--with` right up front: `dgg add <name> <service>[:branch]` adds a worktree to an existing environment and does whatever that implies (re-links and rebuilds the website's assets for chat-gui, builds and starts the image for chat or live-ws, puts the website checkout on a branch). `dgg add <name> cron`/`worker` switches those on, and `--base` runs chat or live-ws from the shared image without a worktree.
 
