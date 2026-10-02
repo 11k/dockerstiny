@@ -182,6 +182,8 @@ services:
             - ${WEBSITE_DIR}/config:/www/www.destiny.gg/config/
             - ${WEBSITE_DIR}/lib:/www/www.destiny.gg/lib/
             - ${WEBSITE_DIR}/tests:/www/www.destiny.gg/tests/
+            # The worktree's own dependencies, not the ones baked into the image.
+            - ${WEBSITE_DIR}/vendor:/www/www.destiny.gg/vendor/
             - ${WEBSITE_DIR}/tmp:/www/www.destiny.gg/tmp/
             - ${WEBSITE_DIR}/phpunit.xml:/www/www.destiny.gg/phpunit.xml
             - ${WEBSITE_DIR}/migrations.php:/www/www.destiny.gg/migrations.php
