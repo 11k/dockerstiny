@@ -1,9 +1,9 @@
 # base alpine image with our cert
-FROM alpine:3.18 AS base
+FROM alpine:3.24 AS base
 # Install certificate authority created by mkcert to allow HTTPS connections to
 # website.
 COPY --from=certs rootCA.pem /usr/local/share/ca-certificates/dgg.crt
-RUN apk add --no-cache tzdata ca-certificates
+RUN apk upgrade --no-cache ca-certificates-bundle && apk add --no-cache tzdata ca-certificates
 
 # caching go modules
 FROM golang:alpine AS go-base

@@ -1,4 +1,12 @@
-FROM node:18.6.0-slim
+FROM node:24.22.0-slim
+
+# Trust Debian's CA store instead of the list compiled into Node, so a CA
+# distrust (e.g. the eMudhra intermediates) only needs a rebuild, not a new
+# Node release.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV NODE_OPTIONS=--use-openssl-ca
 
 WORKDIR /build
 COPY --from=certs rootCA.pem dgg.crt
