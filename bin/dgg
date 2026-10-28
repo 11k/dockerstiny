@@ -570,6 +570,10 @@ agent_settings_json() {
   rules_ask+="      \"Bash($ROOT/scripts/cleanup.sh:*)\""
   cat <<JSON
 {
+  "statusLine": {
+    "type": "command",
+    "command": "\"$ROOT/bin/dgg\" statusline"
+  },
   "permissions": {
     "allow": [
 ${rules_allow%,$'\n'}
@@ -1449,6 +1453,20 @@ cmd_url() {
   echo "https://$DGG_HOST$DGG_PORT_SUFFIX"
 }
 
+# Claude Code's status line: a clickable link to the environment the session is
+# in, or nothing outside one. Claude Code pipes the session's state as JSON on
+# stdin; the session may have cd'd since it started, so go by current_dir.
+cmd_statusline() {
+  local dir url
+  dir="$(sed -n 's/.*"current_dir": *"\([^"]*\)".*/\1/p' | head -n 1)"
+  [ -n "$dir" ] && cd "$dir" 2>/dev/null || return 0
+  ENV_NAME="$(cwd_env)"
+  [ -n "$ENV_NAME" ] && env_exists "$ENV_NAME" || return 0
+  load_env "$ENV_NAME"
+  url="https://$DGG_HOST$DGG_PORT_SUFFIX"
+  printf '\e]8;;%s\a%s\e]8;;\a\n' "$url" "$url"
+}
+
 url_encode() {
   local s="$1" out="" c i LC_ALL=C
   for ((i = 0; i < ${#s}; i++)); do
@@ -1880,6 +1898,7 @@ Environments
 
 Working in one ([name] can be omitted inside envs/<name>/)
   url [name]              Print the site URL
+  statusline              Claude Code status line (reads its JSON on stdin)
   open [name] [--as [user]]
                           Open the site in the default browser; --as logs in as
                           that user first (bare --as: type one in on the site)
@@ -1923,6 +1942,7 @@ main() {
     ls|list) cmd_ls "$@" ;;
     status) cmd_status "$@" ;;
     url) cmd_url "$@" ;;
+    statusline) cmd_statusline ;;
     open) cmd_open "$@" ;;
     path) cmd_path "$@" ;;
     logs) cmd_logs "$@" ;;
