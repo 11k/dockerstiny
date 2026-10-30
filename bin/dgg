@@ -35,6 +35,8 @@ MYSQL_IMAGE="mariadb:10.11.6"
 # Services that can get a worktree, and the optional runtime services.
 WORKTREE_SERVICES=(website chat chat-gui live-ws)
 OPTIONAL_SERVICES=(chat live-ws cron worker)
+# Branch prefixes `dgg create <prefix>/<name>` accepts.
+BRANCH_PREFIXES=(feat fix chore refactor docs ci)
 
 repo_url() {
   case "$1" in
@@ -433,6 +435,7 @@ CHAT_IMAGE=$CHAT_IMAGE
 CHAT_DIR=$CHAT_DIR
 LIVE_WS_IMAGE=$LIVE_WS_IMAGE
 LIVE_WS_DIR=$LIVE_WS_DIR
+DGG_BRANCH=${DGG_BRANCH:-$name}
 WIKISTINY_DIR=$(repo_dir Wikistiny)
 EOF
 }
@@ -1003,8 +1006,14 @@ cmd_init() {
 
 cmd_create() {
   require_init
-  [ $# -gt 0 ] || die "Usage: dgg create <name> [--with svc[:branch],…] [options]"
-  local name="$1"; shift
+  [ $# -gt 0 ] || die "Usage: dgg create [prefix/]<name> [--with svc[:branch],…] [options]"
+  # feat/mute-button → environment mute-button, worktrees on branch feat/mute-button
+  local name="${1#*/}"
+  DGG_BRANCH="$1"; shift
+  if [[ "$DGG_BRANCH" == */* ]]; then
+    [[ " ${BRANCH_PREFIXES[*]} " == *" ${DGG_BRANCH%%/*} "* ]] ||
+      die "Unknown branch prefix '${DGG_BRANCH%%/*}/' (choose from: ${BRANCH_PREFIXES[*]})"
+  fi
   validate_name "$name"
   [ ! -e "$(env_dir "$name")" ] || die "envs/$name already exists"
 
@@ -1024,7 +1033,7 @@ cmd_create() {
     esac
   done
 
-  # --with website:my-branch,chat → service → branch (default: the env name)
+  # --with website:my-branch,chat → service → branch (default: DGG_BRANCH)
   local -A branches=()
   local item svc
   if [ -n "$with" ]; then
@@ -1033,7 +1042,7 @@ cmd_create() {
       svc="${item%%:*}"
       [[ " ${WORKTREE_SERVICES[*]} " == *" $svc "* ]] ||
         die "Can't create a worktree for '$svc' (choose from: ${WORKTREE_SERVICES[*]})"
-      if [[ "$item" == *:* ]]; then branches[$svc]="${item#*:}"; else branches[$svc]="$name"; fi
+      if [[ "$item" == *:* ]]; then branches[$svc]="${item#*:}"; else branches[$svc]="$DGG_BRANCH"; fi
     done
   fi
 
@@ -1209,7 +1218,7 @@ cmd_add() {
 
   for item in "${ARGS[@]}"; do
     svc="${item%%:*}"
-    if [[ "$item" == *:* ]]; then branch="${item#*:}"; else branch="$name"; fi
+    if [[ "$item" == *:* ]]; then branch="${item#*:}"; else branch="${DGG_BRANCH:-$name}"; fi
 
     case "$svc" in
       cron|worker)
@@ -1871,11 +1880,15 @@ Setup
                           'pre-update'). Existing environments are untouched.
 
 Environments
-  create <name> [options] Create and start an environment
+  create [prefix/]<name> [options]
+                          Create and start an environment. With a prefix
+                          (feat fix chore refactor docs ci), e.g.
+                          feat/mute-button, the environment is mute-button
+                          and its branches are feat/mute-button.
       --with svc[:branch],…   Worktrees for the services you're changing
                               (website, chat, chat-gui, live-ws). The branch
-                              defaults to <name>; created from origin's
-                              default branch if it doesn't exist.
+                              defaults to [prefix/]<name>; created from
+                              origin's default branch if it doesn't exist.
       --without svc,…         Don't run these (chat, live-ws, cron, worker)
       --minimal               Same as --without live-ws,cron,worker
       --workers N             Queue worker replicas (default 2)

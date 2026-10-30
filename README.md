@@ -34,6 +34,7 @@ dgg create my-feature --with website,chat-gui
 
 ```
 dgg create tts-fix --with website,live-ws     # worktrees on a new "tts-fix" branch in each
+dgg create fix/tts-fix --with website,live-ws # environment "tts-fix", branch "fix/tts-fix" (feat fix chore refactor docs ci)
 dgg create emotes --with chat-gui:feat/emotes # …or name the branch (existing or new)
 dgg create chat-bug --with chat --minimal     # skip live-ws, cron and the queue workers
 dgg ls                                        # what exists, what's running, which branches
