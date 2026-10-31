@@ -192,8 +192,12 @@ dc() {
   local x
   for x in "${p[@]}"; do [ -n "$x" ] && args+=(--profile "$x"); done
   if [ ! -t 1 ]; then args+=(--progress quiet); fi
-  docker compose --project-directory "$ROOT" -f "$ROOT/docker-compose.yml" \
-    --env-file "$(env_file "$name")" "${args[@]}" "$@"
+  # Compose builds through buildx bake, which refuses to read files outside
+  # the working directory and the build context — and chat's and live-ws's
+  # Dockerfiles live in docker/, outside their worktrees. --project-directory
+  # doesn't count; bake checks the real cwd, so run from the root.
+  (cd "$ROOT" && docker compose --project-directory "$ROOT" -f "$ROOT/docker-compose.yml" \
+    --env-file "$(env_file "$name")" "${args[@]}" "$@")
 }
 
 running_count() {
